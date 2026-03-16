@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "roomdoo-locks-base"
+version = "0.1.0"
+description = "Contrato base para librerías de integración con smart locks de Roomdoo"
+requires-python = ">=3.10"
+dependencies = []
+
+[tool.setuptools.packages.find]
+where = ["."]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0", "mypy>=1.0"]
