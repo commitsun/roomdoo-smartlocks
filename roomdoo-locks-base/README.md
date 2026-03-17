@@ -4,8 +4,10 @@ Base contract for Roomdoo smart lock integrations. Defines the abstract interfac
 
 ## Installation
 
+From the root of the monorepo:
+
 ```bash
-pip install roomdoo-locks-base
+pip install -e "./roomdoo-locks-base[dev]"
 ```
 
 ## Implementing a vendor library
