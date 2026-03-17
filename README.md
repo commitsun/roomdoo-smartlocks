@@ -8,15 +8,15 @@ Monorepo for Roomdoo smart lock integration libraries. Each subdirectory contain
 |---|---|
 | [roomdoo-locks-base](roomdoo-locks-base/) | Abstract contract (interface, exceptions, return types) that all vendor libraries must implement |
 
-Vendor-specific implementations (e.g. TTLock, Nuki, Yale) will live as sibling directories following the same convention.
+Vendor-specific implementations (e.g. Tuya, Salto) will live as sibling directories following the same convention.
 
 ## Architecture
 
 ```
 roomdoo-smartlocks/
 ├── roomdoo-locks-base/      # Abstract interface — no vendor dependencies
-├── roomdoo-locks-ttlock/    # (future) TTLock implementation
-├── roomdoo-locks-nuki/      # (future) Nuki implementation
+├── roomdoo-locks-tuya/      # (future) Tuya implementation
+├── roomdoo-locks-salto/     # (future) Salto implementation
 └── ...
 ```
 
@@ -55,4 +55,4 @@ pre-commit run --all-files
 
 ## License
 
-Proprietary — Roomdoo.
+This project is licensed under the [GNU Affero General Public License v3.0 (AGPL-3.0)](https://www.gnu.org/licenses/agpl-3.0.html).
