@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "roomdoo-locks-omnitec"
+version = "0.1.0"
+description = "Omnitec (OsAccess) provider for roomdoo-locks"
+requires-python = ">=3.10"
+license = "AGPL-3.0-only"
+dependencies = [
+    "roomdoo-locks-base>=0.1.0",
+    "httpx>=0.27",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0", "mypy>=1.0", "ruff>=0.11.0", "respx>=0.22"]
