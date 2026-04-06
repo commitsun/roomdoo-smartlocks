@@ -1,0 +1,8 @@
+Metadata-Version: 2.4
+Name: roomdoo-locks-base
+Version: 0.1.0
+Summary: Contrato base para librerías de integración con smart locks de Roomdoo
+Requires-Python: >=3.10
+Provides-Extra: dev
+Requires-Dist: pytest>=7.0; extra == "dev"
+Requires-Dist: mypy>=1.0; extra == "dev"
