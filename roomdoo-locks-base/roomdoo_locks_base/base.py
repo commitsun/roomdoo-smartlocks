@@ -49,8 +49,7 @@ class BaseLockProvider(ABC):
         return self._do_create_code(lock_id, starts_at, ends_at)
 
     @abstractmethod
-    def _do_create_code(self, lock_id: str, starts_at: datetime, ends_at: datetime) -> CodeResult:
-        ...
+    def _do_create_code(self, lock_id: str, starts_at: datetime, ends_at: datetime) -> CodeResult: ...
 
     def invalidate_code(self, lock_id: str, code_id: str) -> bool:
         """
@@ -73,12 +72,9 @@ class BaseLockProvider(ABC):
         return self._do_invalidate_code(lock_id, code_id)
 
     @abstractmethod
-    def _do_invalidate_code(self, lock_id: str, code_id: str) -> bool:
-        ...
+    def _do_invalidate_code(self, lock_id: str, code_id: str) -> bool: ...
 
-    def modify_code(
-        self, lock_id: str, code_id: str, starts_at: datetime, ends_at: datetime
-    ) -> CodeResult:
+    def modify_code(self, lock_id: str, code_id: str, starts_at: datetime, ends_at: datetime) -> CodeResult:
         """
         Modify the validity window of an existing code.
 
@@ -110,10 +106,7 @@ class BaseLockProvider(ABC):
         return self._do_modify_code(lock_id, code_id, starts_at, ends_at)
 
     @abstractmethod
-    def _do_modify_code(
-        self, lock_id: str, code_id: str, starts_at: datetime, ends_at: datetime
-    ) -> CodeResult:
-        ...
+    def _do_modify_code(self, lock_id: str, code_id: str, starts_at: datetime, ends_at: datetime) -> CodeResult: ...
 
     @abstractmethod
     def test_connection(self) -> bool:

@@ -15,26 +15,31 @@ class LockError(Exception):
     LockOperationError and its subclasses require an explicit message because
     the vendor-specific reason is essential for diagnosis.
     """
+
     pass
 
 
 class LockAuthError(LockError):
     """Invalid credentials or token refresh failed."""
+
     pass
 
 
 class LockNotFoundError(LockError):
     """The provided lock_id does not exist or is not accessible."""
+
     pass
 
 
 class LockCodeNotFoundError(LockError):
     """The provided code_id does not exist."""
+
     pass
 
 
 class LockConnectionError(LockError):
     """Vendor API did not respond after exhausting retries."""
+
     pass
 
 
@@ -53,7 +58,7 @@ class LockCodeDeletionError(LockOperationError):
     invalidation of ``old_code_id`` separately.
     """
 
-    def __init__(self, message: str, old_code_id: str, new_result: "CodeResult"):
+    def __init__(self, message: str, old_code_id: str, new_result: CodeResult):
         self.old_code_id = old_code_id
         self.new_result = new_result
         super().__init__(message)
