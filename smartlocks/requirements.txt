@@ -1,2 +1,0 @@
-requests
-roomdoo-locks-base @ file:./roomdoo-locks-base
