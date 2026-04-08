@@ -5,6 +5,7 @@ from roomdoo_locks_base import BaseLockProvider, CodeResult
 from roomdoo_locks_base.exceptions import (
     LockAuthError,
     LockConnectionError,
+    LockNotFoundError,
     LockOperationError,
 )
 
@@ -32,6 +33,7 @@ class OmnitecProvider(BaseLockProvider):
                 "username":     self.username,
                 "password":     self.password
             })
+            self._handle_response(response)
             body = response.json()
             if "access_token" not in body:
                 raise LockAuthError("Credenciales invalidas")
@@ -47,6 +49,7 @@ class OmnitecProvider(BaseLockProvider):
                 "clientSecret": self.clientSecret,
                 "refreshToken": self.refreshToken
             })
+            self._handle_response(response)
             body = response.json()
             if "access_token" not in body:
                 raise LockAuthError("No se ha podido refrescar el token")
@@ -56,6 +59,43 @@ class OmnitecProvider(BaseLockProvider):
             raise LockConnectionError("No se puede conectar con la API de Omnitec")
 
     # ── Helpers ──────────────────────────────────────────────────────────────
+
+    def _handle_response(self, response: requests.Response) -> None:
+        """Centraliza la gestion de errores HTTP y de negocio de la API."""
+        if response.status_code == 401:
+            raise LockAuthError(
+                f"Error de autenticacion [401]: {response.text}"
+            )
+        if response.status_code == 404:
+            raise LockNotFoundError(
+                f"Recurso no encontrado [404]: {response.text}"
+            )
+        if response.status_code == 500:
+            raise LockConnectionError(
+                f"Error interno del servidor [500]: {response.text}"
+            )
+        if not response.ok:
+            raise LockOperationError(
+                f"Error inesperado [{response.status_code}]: {response.text}"
+            )
+
+        # Errores de negocio dentro de respuestas 200
+        try:
+            body = response.json()
+        except Exception:
+            return
+
+        errcode = body.get("errcode")
+        errmsg  = body.get("errmsg", "Error desconocido")
+
+        if errcode is not None and errcode != 0:
+            if errcode in (-3, -4):
+                raise LockAuthError(f"Error de autenticacion [{errcode}]: {errmsg}")
+            if errcode == -3004:
+                raise LockNotFoundError(f"Cerradura no encontrada [{errcode}]: {errmsg}")
+            if errcode == -3008:
+                raise LockNotFoundError(f"Codigo no encontrado [{errcode}]: {errmsg}")
+            raise LockOperationError(f"Error de operacion [{errcode}]: {errmsg}")
 
     def _to_ms(self, dt: datetime) -> int:
         return int(dt.timestamp() * 1000)
@@ -67,6 +107,7 @@ class OmnitecProvider(BaseLockProvider):
         response = requests.get(f"{self.BASE_URL}/lock/passwords", params=self._params({
             "ID": lock_id
         }))
+        self._handle_response(response)
         return response.json().get("list", [])
 
     # ── test_connection ──────────────────────────────────────────────────────
@@ -75,21 +116,17 @@ class OmnitecProvider(BaseLockProvider):
         self._authenticate()
         return True
 
-    # ── _do_open_lock ────────────────────────────────────────────────────────────
+    # ── open_lock ────────────────────────────────────────────────────────────
 
     def _do_open_lock(self, lock_id: str) -> bool:
         try:
             response = requests.put(f"{self.BASE_URL}/lock/unlock", params=self._params({
                 "ID": lock_id
             }))
-            body = response.json()
+            self._handle_response(response)
+            return True
         except requests.exceptions.ConnectionError:
             raise LockConnectionError("No se puede conectar con la API de Omnitec")
-
-        if body.get("errcode") == 0:
-            return True
-
-        raise LockOperationError(body.get("errmsg", "No se ha podido abrir la cerradura"))
 
     # ── create_code (sobreescrito para aceptar pin opcional) ─────────────────
 
@@ -115,10 +152,11 @@ class OmnitecProvider(BaseLockProvider):
             "startDate": self._to_ms(starts_at),
             "endDate":   self._to_ms(ends_at)
         }))
+        self._handle_response(response)
         body = response.json()
 
         if "keyboardPwd" not in body:
-            raise LockOperationError(body.get("errmsg", "Error al generar contrasena aleatoria"))
+            raise LockOperationError("La API no devolvio una contrasena aleatoria")
 
         return CodeResult(
             code_id   = str(body["keyboardPwdId"]),
@@ -136,10 +174,11 @@ class OmnitecProvider(BaseLockProvider):
             "startDate": self._to_ms(starts_at),
             "endDate":   self._to_ms(ends_at)
         }))
+        self._handle_response(response)
         body = response.json()
 
         if "keyboardPwdId" not in body:
-            raise LockOperationError(body.get("errmsg", "Error al generar contrasena personalizada"))
+            raise LockOperationError("La API no devolvio el ID de la contrasena personalizada")
 
         return CodeResult(
             code_id   = str(body["keyboardPwdId"]),
@@ -158,14 +197,16 @@ class OmnitecProvider(BaseLockProvider):
                 "passID": code_id,
                 "type":   2
             }))
-            body = response.json()
         except requests.exceptions.ConnectionError:
             raise LockConnectionError("No se puede conectar con la API de Omnitec")
 
-        if body.get("errcode") in (0, -3008) or body.get("errmsg") == "Invalid Password":
+        # Idempotente: codigo no encontrado se considera exito
+        try:
+            self._handle_response(response)
+        except LockNotFoundError:
             return True
 
-        raise LockOperationError(body.get("errmsg", "Error al eliminar la contrasena"))
+        return True
 
     # ── _do_modify_code ──────────────────────────────────────────────────────
 
@@ -178,22 +219,19 @@ class OmnitecProvider(BaseLockProvider):
                 "startDate": self._to_ms(starts_at),
                 "endDate":   self._to_ms(ends_at)
             }))
-            body = response.json()
+            self._handle_response(response)
         except requests.exceptions.ConnectionError:
             raise LockConnectionError("No se puede conectar con la API de Omnitec")
 
-        if body.get("errcode") == 0:
-            passwords = self._get_lock_passwords(lock_id)
-            pin = next(
-                (p["keyboardPwd"] for p in passwords if str(p["keyboardPwdId"]) == code_id),
-                ""
-            )
-            return CodeResult(
-                code_id   = code_id,
-                pin       = pin,
-                lock_id   = lock_id,
-                starts_at = starts_at,
-                ends_at   = ends_at
-            )
-
-        raise LockOperationError(body.get("errmsg", "Error al modificar la contrasena"))
+        passwords = self._get_lock_passwords(lock_id)
+        pin = next(
+            (p["keyboardPwd"] for p in passwords if str(p["keyboardPwdId"]) == code_id),
+            ""
+        )
+        return CodeResult(
+            code_id   = code_id,
+            pin       = pin,
+            lock_id   = lock_id,
+            starts_at = starts_at,
+            ends_at   = ends_at
+        )
