@@ -10,7 +10,7 @@ USERNAME      = "fake_user"
 PASSWORD      = "fake_pass"
 LOCK_ID       = "8279953"
 
-# Mock de autenticacion reutilizable
+# Reusable authentication mock
 def mock_auth():
     responses.get(
         "https://api.rentandpass.com/api/signin/token",
@@ -28,7 +28,7 @@ def time_range():
 def test_connection():
     mock_auth()
     provider = OmnitecProvider(CLIENT_ID, CLIENT_SECRET, USERNAME, PASSWORD)
-    mock_auth()  # test_connection llama a _authenticate de nuevo
+    mock_auth()  # test_connection calls _authenticate again
     assert provider.test_connection() is True
 
 @responses.activate
@@ -41,7 +41,7 @@ def test_open_lock():
         json={"errcode": 0}
     )
 
-    assert provider._do_open_lock(LOCK_ID) is True
+    assert provider.open_lock(LOCK_ID) is True
 
 
 @responses.activate
@@ -55,7 +55,7 @@ def test_open_lock_error():
     )
 
     with pytest.raises(LockOperationError):
-        provider._do_open_lock(LOCK_ID)
+        provider.open_lock(LOCK_ID)
 
 @responses.activate
 def test_create_random_code(time_range):

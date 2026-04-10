@@ -62,3 +62,17 @@ class LockCodeDeletionError(LockOperationError):
         self.old_code_id = old_code_id
         self.new_result = new_result
         super().__init__(message)
+
+class LockAPIError(LockOperationError):
+    """Vendor API didn't return a body."""
+
+    def __init__(self, message: str):
+        self.message = message
+        super().__init__(message)
+
+class LockNoPermissionError(LockOperationError):
+    """User doesn't have permission to perform the operation on the lock."""
+
+    def __init__(self, message: str):
+        self.message = message
+        super().__init__(message)
