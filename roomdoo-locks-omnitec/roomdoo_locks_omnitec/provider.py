@@ -8,7 +8,8 @@ from roomdoo_locks_base.exceptions import (
     LockNotFoundError,
     LockOperationError,
     LockAPIError,
-    LockNoPermissionError
+    LockNoPermissionError,
+    LockOfflineError
 )
 
 
@@ -91,6 +92,8 @@ class OmnitecProvider(BaseLockProvider):
         description  = body.get("description", "Unknown error")
 
         if errcode is not None and errcode != 0:
+            if errcode == -1:
+                raise LockOfflineError(f"Invalid password id [{errcode}]: {description}")
             if errcode == -2009:
                 raise LockNoPermissionError(f"Invalid password id [{errcode}]: {description}")
             if errcode == 10001:
@@ -182,7 +185,7 @@ class OmnitecProvider(BaseLockProvider):
         # Idempotent: code not found is treated as success
         try:
             self._handle_response(response)
-        except LockNotFoundError,LockNoPermissionError:
+        except (LockNotFoundError,LockNoPermissionError):
             return True
 
         return True

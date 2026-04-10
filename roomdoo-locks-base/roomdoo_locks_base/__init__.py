@@ -7,6 +7,9 @@ from roomdoo_locks_base.exceptions import (
     LockError,
     LockNotFoundError,
     LockOperationError,
+    LockAPIError,
+    LockNoPermissionError,
+    LockOfflineError,
 )
 from roomdoo_locks_base.models import CodeResult
 
@@ -20,4 +23,7 @@ __all__ = [
     "LockError",
     "LockNotFoundError",
     "LockOperationError",
+    "LockAPIError",
+    "LockNoPermissionError",
+    "LockOfflineError",
 ]

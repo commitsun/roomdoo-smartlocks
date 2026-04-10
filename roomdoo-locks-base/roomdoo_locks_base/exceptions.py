@@ -76,3 +76,10 @@ class LockNoPermissionError(LockOperationError):
     def __init__(self, message: str):
         self.message = message
         super().__init__(message)
+
+class LockOfflineError(LockOperationError):
+    """Lock is offline."""
+
+    def __init__(self, message: str):
+        self.message = message
+        super().__init__(message)
