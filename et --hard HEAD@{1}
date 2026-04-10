@@ -1,0 +1,6 @@
+[33m19e6b51[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmain[m[33m, [m[1;31morigin/main[m[33m)[m HEAD@{0}: reset: moving to 19e6b51ac16bd41929495204029cccfb7f0bcf6f
+[33m197e081[m HEAD@{1}: commit: Comment changes and improved error code management in provider.
+[33m19e6b51[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmain[m[33m, [m[1;31morigin/main[m[33m)[m HEAD@{2}: commit: Error codes management in provider
+[33m55e4feb[m HEAD@{3}: pull --tags origin main: Merge made by the 'ort' strategy.
+[33m5b16f11[m HEAD@{4}: commit: Add GitHub Actions workflow for tests
+[33mf3566a3[m HEAD@{5}: commit: Librería de Omnitec

@@ -182,7 +182,7 @@ class OmnitecProvider(BaseLockProvider):
         # Idempotent: code not found is treated as success
         try:
             self._handle_response(response)
-        except LockNotFoundError:
+        except LockNotFoundError,LockNoPermissionError:
             return True
 
         return True

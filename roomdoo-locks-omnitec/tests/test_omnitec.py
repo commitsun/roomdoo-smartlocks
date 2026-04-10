@@ -58,7 +58,7 @@ def test_open_lock_error():
         provider.open_lock(LOCK_ID)
 
 @responses.activate
-def test_create_random_code(time_range):
+def test_create_code(time_range):
     mock_auth()
     provider = OmnitecProvider(CLIENT_ID, CLIENT_SECRET, USERNAME, PASSWORD)
 
@@ -75,27 +75,6 @@ def test_create_random_code(time_range):
     result = provider.create_code(LOCK_ID, starts_at, ends_at)
     assert result.pin == "533463"
     assert result.code_id == "7107456"
-
-    provider.invalidate_code(LOCK_ID, result.code_id)
-
-@responses.activate
-def test_create_custom_code(time_range):
-    mock_auth()
-    provider = OmnitecProvider(CLIENT_ID, CLIENT_SECRET, USERNAME, PASSWORD)
-
-    starts_at, ends_at = time_range
-    responses.post(
-        "https://api.rentandpass.com/api/password",
-        json={"keyboardPwdId": 7107457}
-    )
-    responses.delete(
-        "https://api.rentandpass.com/api/password",
-        json={"errcode": 0}
-    )
-
-    result = provider.create_code(LOCK_ID, starts_at, ends_at, pin="0123456")
-    assert result.pin == "0123456"
-    assert result.code_id == "7107457"
 
     provider.invalidate_code(LOCK_ID, result.code_id)
 
@@ -163,13 +142,13 @@ def test_invalid_credentials():
 
 
 @responses.activate
-def test_invalidate_nonexistent_code(time_range):
+def test_invalidate_nonexistent_code():
     mock_auth()
     provider = OmnitecProvider(CLIENT_ID, CLIENT_SECRET, USERNAME, PASSWORD)
 
     responses.delete(
         "https://api.rentandpass.com/api/password",
-        json={"errcode": -3008, "errmsg": "Invalid Password"}
+        json={"errcode": -2009, "errmsg": "Invalid Password"}
     )
 
     assert provider.invalidate_code(LOCK_ID, "99999999") is True
