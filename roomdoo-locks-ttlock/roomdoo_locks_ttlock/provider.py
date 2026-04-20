@@ -37,7 +37,7 @@ class TTLockProvider(BaseLockProvider):
             )
         try:
             body = response.json()
-        except Exception:
+        except requests.exceptions.JSONDecodeError:
             raise LockAPIError("Invalid response from TTLock API")
         errcode = body.get("errcode")
         errmsg = body.get("errmsg", "Unknown error")
@@ -128,28 +128,6 @@ class TTLockProvider(BaseLockProvider):
             self.tokenExpiry = datetime.now().timestamp() + data["expires_in"]
         except requests.exceptions.RequestException as e:
             raise LockConnectionError(f"Failed to connect to TTLock API: {str(e)}")
-
-    def _refresh_access_token(self):
-        url = f"{BASE_URL}/oauth2/token"
-        payload = {
-            "clientId": self.clientId,
-            "clientSecret": self.clientSecret,
-            "grantType": "refresh_token",
-            "refreshToken": self.accessToken,
-        }
-        try:
-            response = requests.post(url, data=payload)
-            data = self._handle_response(response)
-            self.accessToken = data["access_token"]
-            self.tokenExpiry = datetime.now().timestamp() + data["expires_in"]
-        except requests.exceptions.RequestException as e:
-            raise LockConnectionError(f"Failed to connect to TTLock API: {str(e)}")
-
-    def _ensure_token(self):
-        """Refresh the access token if it is expired or about to expire."""
-        # Refresh 60 seconds before expiry to avoid edge cases
-        if self.tokenExpiry and datetime.now().timestamp() >= self.tokenExpiry - 60:
-            self._refresh_access_token()
 
     # ------------------------------------------------------------------
     # BaseLockProvider abstract methods
