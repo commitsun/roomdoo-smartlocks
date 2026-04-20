@@ -13,7 +13,7 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://example.com/roomdoo-locks-ttlock"
+Homepage = "https://roomdoo-locks-ttlock"
 
 [tool.setuptools.packages.find]
 where = ["."]

@@ -42,35 +42,57 @@ class TTLockProvider(BaseLockProvider):
         errcode = body.get("errcode")
         errmsg = body.get("errmsg", "Unknown error")
         if errcode is not None and errcode != 0:
-            # Account and auth errors
-            if errcode in (10001, 10003, 10004, 10007, 10011):
+            '''
+            10001: Invalid client, wrong clientId or clientSecret
+            10003: token does not exist
+            10004: token is invalidate or revoked
+            10007: invalid account or invalid password
+            10011: invalid refresh token
+            30005: Password must be encrypted by md5
+            '''
+            if errcode in (10001, 10003, 10004, 10007, 10011, 30005):
                 raise LockAuthError(f"Auth error [{errcode}]: {errmsg}")
+            '''
+            -3: invalid parameter
+            -2018: permission denied
+            20002: not lock admin
+            30002: invalid username. Only English character and digits is allowed
+            '''
             if errcode in (-3, -2018, 20002, 30002):
                 raise LockNoPermissionError(f"Permission error [{errcode}]: {errmsg}")
+            #Error del servidor
             if errcode == 90000:
                 raise LockConnectionError(f"Internal server error [{errcode}]: {errmsg}")
-            # Lock errors
+            # Lock does not exist
             if errcode == -1003:
                 raise LockNotFoundError(f"Lock not found [{errcode}]: {errmsg}")
+            # Frozen lock
             if errcode == -2025:
                 raise LockOperationError(f"Lock is frozen [{errcode}]: {errmsg}")
+            # The function is not supported for this lock
             if errcode == -4043:
                 raise LockOperationError(f"Function not supported [{errcode}]: {errmsg}")
             # Passcode errors
             if errcode == -2009:
                 raise LockNoPermissionError(f"Invalid passcode [{errcode}]: {errmsg}")
+            # Password data not found for this lock
             if errcode == -1007:
                 raise LockNotFoundError(f"No password data for this lock [{errcode}]: {errmsg}")
-            # Gateway and connectivity errors
+            # Not conected to gateway
             if errcode == -2012:
                 raise LockOfflineError(f"Lock not connected to gateway [{errcode}]: {errmsg}")
+            '''
+             -3002: Gateway is offline
+             -3003: Gateway is busy'''
             if errcode in (-3002, -3003):
                 raise LockOfflineError(f"Gateway error [{errcode}]: {errmsg}")
+            #Lock offline
             if errcode == -3036:
                 raise LockOfflineError(f"Lock is offline [{errcode}]: {errmsg}")
+            #Lock busy
             if errcode == -3037:
                 raise LockOperationError(f"Lock is busy [{errcode}]: {errmsg}")
-            # eKey errors
+            # eKey does not exist
             if errcode == -1008:
                 raise LockNotFoundError(f"eKey not found [{errcode}]: {errmsg}")
             # Fallback
@@ -78,7 +100,6 @@ class TTLockProvider(BaseLockProvider):
         return body
 
     def _to_ms(self, value) -> int:
-        """Convert a datetime or int (seconds) to milliseconds timestamp."""
         if isinstance(value, datetime):
             return int(value.timestamp() * 1000)
         if isinstance(value, int):
@@ -87,12 +108,6 @@ class TTLockProvider(BaseLockProvider):
 
     def _now_ms(self) -> int:
         return int(datetime.now().timestamp() * 1000)
-
-    def _ms_to_utc(self, ms: int | None) -> datetime | None:
-        """Convert milliseconds timestamp to UTC datetime."""
-        if ms is None:
-            return None
-        return datetime.fromtimestamp(ms / 1000, tz=timezone.utc)
 
     # ------------------------------------------------------------------
     # Auth
@@ -130,12 +145,18 @@ class TTLockProvider(BaseLockProvider):
         except requests.exceptions.RequestException as e:
             raise LockConnectionError(f"Failed to connect to TTLock API: {str(e)}")
 
+    def _ensure_token(self):
+        """Refresh the access token if it is expired or about to expire."""
+        # Refresh 60 seconds before expiry to avoid edge cases
+        if self.tokenExpiry and datetime.now().timestamp() >= self.tokenExpiry - 60:
+            self._refresh_access_token()
+
     # ------------------------------------------------------------------
     # BaseLockProvider abstract methods
-    # The base class handles validation and calls these _do_* methods.
     # ------------------------------------------------------------------
 
     def _do_create_code(self, lock_id: str, starts_at: datetime, ends_at: datetime) -> CodeResult:
+        self._ensure_token()
         # Passcode types:
         # 1: One-time       2: Permanent     3: Period
         # 4: Delete all     5: Weekend       6: Daily
@@ -145,7 +166,7 @@ class TTLockProvider(BaseLockProvider):
             "clientId": self.clientId,
             "accessToken": self.accessToken,
             "lockId": lock_id,
-            "keyboardPwdType": 3,  # Period code
+            "keyboardPwdType": 3,
             "startDate": self._to_ms(starts_at),
             "endDate": self._to_ms(ends_at),
             "date": self._now_ms(),
@@ -164,6 +185,7 @@ class TTLockProvider(BaseLockProvider):
             raise LockConnectionError(f"Failed to connect to TTLock API: {str(e)}")
 
     def _do_invalidate_code(self, lock_id: str, code_id: str) -> bool:
+        self._ensure_token()
         url = f"{BASE_URL}/v3/keyboardPwd/delete"
         payload = {
             "clientId": self.clientId,
@@ -189,6 +211,7 @@ class TTLockProvider(BaseLockProvider):
     # ------------------------------------------------------------------
 
     def get_lock_info(self, lock_id: int):
+        self._ensure_token()
         url = f"{BASE_URL}/v3/lock/detail"
         params = {
             "clientId": self.clientId,
@@ -202,6 +225,7 @@ class TTLockProvider(BaseLockProvider):
             raise LockConnectionError(f"Failed to connect to TTLock API: {str(e)}")
 
     def get_lock_list(self, pageNo: int = 1, pageSize: int = 20, lockAlias: str = None, groupId: int = None):
+        self._ensure_token()
         url = f"{BASE_URL}/v3/lock/list"
         params = {
             "clientId": self.clientId,
@@ -224,6 +248,7 @@ class TTLockProvider(BaseLockProvider):
     # ------------------------------------------------------------------
 
     def set_auto_lock_time(self, lock_id: int, seconds: int, type: int = 2):
+        self._ensure_token()
         url = f"{BASE_URL}/v3/lock/setAutoLockTime"
         payload = {
             "clientId": self.clientId,
