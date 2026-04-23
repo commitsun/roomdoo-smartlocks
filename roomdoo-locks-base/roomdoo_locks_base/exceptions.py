@@ -43,6 +43,24 @@ class LockConnectionError(LockError):
     pass
 
 
+class LockAPIError(LockError):
+    """Vendor API returned an unexpected or invalid response."""
+
+    pass
+
+
+class LockNoPermissionError(LockError):
+    """Permission was denied by the vendor API."""
+
+    pass
+
+
+class LockOfflineError(LockError):
+    """The lock is offline or unreachable."""
+
+    pass
+
+
 class LockOperationError(LockError):
     """Vendor API rejected the operation for a business reason."""
 

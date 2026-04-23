@@ -9,5 +9,9 @@ description = "Contrato base para librerías de integración con smart locks de 
 requires-python = ">=3.10"
 dependencies = []
 
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["roomdoo_locks_base*"]
+
 [project.optional-dependencies]
 dev = ["pytest>=7.0", "mypy>=1.0", "ruff>=0.11.0", "pre-commit>=4.0"]

@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "roomdoo-locks-ttlock"
+version = "0.1.0"
+description = "Provider library for TTLock integration"
+requires-python = ">=3.10"
+dependencies = [
+  "requests>=2.0",
+  "roomdoo-locks-base>=0.1.0"
+]
+
+[project.urls]
+Homepage = "https://roomdoo-locks-ttlock"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["roomdoo_locks_ttlock*"]
