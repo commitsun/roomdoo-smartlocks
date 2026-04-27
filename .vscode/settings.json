@@ -1,0 +1,6 @@
+{
+  "python.analysis.extraPaths": [
+    "roomdoo-locks-base",
+    "roomdoo-locks-ttlock"
+  ]
+}
