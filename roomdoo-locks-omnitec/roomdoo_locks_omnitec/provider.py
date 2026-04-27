@@ -94,8 +94,28 @@ class OmnitecProvider(BaseLockProvider):
         if errcode is not None and errcode != 0:
             if errcode == -1:
                 raise LockOfflineError(f"Invalid password id [{errcode}]: {description}")
+            if errcode == -1003:
+                raise LockNotFoundError(f"Lock not found [{errcode}]: {description}")
+            if errcode == -1007:
+                raise LockNotFoundError(f"No password data for this lock [{errcode}]: {description}")
+            if errcode == -1008:
+                raise LockNotFoundError(f"eKey not found [{errcode}]: {description}")
+            if errcode == (-3, -2018, 20002, 30002):
+                raise LockNoPermissionError(f"Permission error [{errcode}]: {description}")
             if errcode == -2009:
                 raise LockNoPermissionError(f"Invalid password id [{errcode}]: {description}")
+            if errcode == -2012:
+                raise LockOfflineError(f"Lock not connected to gateway [{errcode}]: {description}")
+            if errcode == -2025:
+                raise LockOperationError(f"Lock is frozen [{errcode}]: {description}")
+            if errcode in (-3002, -3003):
+                raise LockOfflineError(f"Gateway error [{errcode}]: {description}")
+            if errcode == -3036:
+                raise LockOfflineError(f"Lock is offline [{errcode}]: {description}")
+            if errcode == -3037:
+                raise LockOperationError(f"Lock is busy [{errcode}]: {description}")
+            if errcode == -4043:
+                raise LockOperationError(f"Function not supported [{errcode}]: {description}")
             if errcode == 10001:
                 raise LockAuthError(f"Invalid client [{errcode}]: {description}")
             if errcode == 10003:
@@ -108,6 +128,8 @@ class OmnitecProvider(BaseLockProvider):
                 raise LockNoPermissionError(f"Invalid lock id [{errcode}]: {description}")
             if errcode == 30001:
                 raise LockNoPermissionError(f"Do not have permission [{errcode}]: {description}")
+            if errcode == 90000:
+                raise LockConnectionError(f"Internal server error [{errcode}]: {description}")
             raise LockOperationError(f"Operation error [{errcode}]: {description}")
 
     def _to_ms(self, dt: datetime) -> int:
