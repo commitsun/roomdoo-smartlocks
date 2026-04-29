@@ -134,7 +134,6 @@ class TTLockProvider(BaseLockProvider):
     # ------------------------------------------------------------------
 
     def _do_create_code(self, lock_id: str, starts_at: datetime, ends_at: datetime) -> CodeResult:
-        self._ensure_token()
         # Passcode types:
         # 1: One-time       2: Permanent     3: Period
         # 4: Delete all     5: Weekend       6: Daily
@@ -163,7 +162,6 @@ class TTLockProvider(BaseLockProvider):
             raise LockConnectionError(f"Failed to connect to TTLock API: {str(e)}")
 
     def _do_invalidate_code(self, lock_id: str, code_id: str) -> bool:
-        self._ensure_token()
         url = f"{BASE_URL}/v3/keyboardPwd/delete"
         payload = {
             "clientId": self.clientId,
@@ -189,7 +187,6 @@ class TTLockProvider(BaseLockProvider):
     # ------------------------------------------------------------------
 
     def get_lock_info(self, lock_id: int):
-        self._ensure_token()
         url = f"{BASE_URL}/v3/lock/detail"
         params = {
             "clientId": self.clientId,
@@ -203,7 +200,6 @@ class TTLockProvider(BaseLockProvider):
             raise LockConnectionError(f"Failed to connect to TTLock API: {str(e)}")
 
     def get_lock_list(self, pageNo: int = 1, pageSize: int = 20, lockAlias: str = None, groupId: int = None):
-        self._ensure_token()
         url = f"{BASE_URL}/v3/lock/list"
         params = {
             "clientId": self.clientId,
