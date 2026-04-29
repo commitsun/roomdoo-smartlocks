@@ -63,7 +63,7 @@ def test_create_code(time_range):
     provider = OmnitecProvider(CLIENT_ID, CLIENT_SECRET, USERNAME, PASSWORD)
 
     starts_at, ends_at = time_range
-    responses.get(
+    responses.post(
         "https://api.rentandpass.com/api/password",
         json={"keyboardPwd": "533463", "keyboardPwdId": 7107456}
     )
@@ -85,7 +85,7 @@ def test_modify_code(time_range):
     provider = OmnitecProvider(CLIENT_ID, CLIENT_SECRET, USERNAME, PASSWORD)
 
     starts_at, ends_at = time_range
-    responses.get(
+    responses.post(
         "https://api.rentandpass.com/api/password",
         json={"keyboardPwd": "533463", "keyboardPwdId": 7107456}
     )
