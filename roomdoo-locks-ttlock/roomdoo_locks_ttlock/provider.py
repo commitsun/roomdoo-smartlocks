@@ -1,4 +1,7 @@
+from encodings.punycode import digits
+
 import requests
+import secrets
 from datetime import datetime, timezone
 
 from roomdoo_locks_base import BaseLockProvider, CodeResult
@@ -91,7 +94,7 @@ class TTLockProvider(BaseLockProvider):
                 raise LockOfflineError(f"Lock is offline [{errcode}]: {errmsg}")
             #Lock busy
             if errcode == -3037:
-                raise LockOperationError(f"Lock is busy [{errcode}]: {errmsg}")
+                raise LockOfflineError(f"Lock is busy [{errcode}]: {errmsg}")
             # eKey does not exist
             if errcode == -1008:
                 raise LockNotFoundError(f"eKey not found [{errcode}]: {errmsg}")
@@ -134,18 +137,19 @@ class TTLockProvider(BaseLockProvider):
     # ------------------------------------------------------------------
 
     def _do_create_code(self, lock_id: str, starts_at: datetime, ends_at: datetime) -> CodeResult:
-        # Passcode types:
-        # 1: One-time       2: Permanent     3: Period
-        # 4: Delete all     5: Weekend       6: Daily
-        # 7: Workday        8-14: Mon-Sun
-        url = f"{BASE_URL}/v3/keyboardPwd/get"
+        digits = "123456789"
+        pin = "".join(secrets.choice(digits) for _ in range(6))
+
+        url = f"{BASE_URL}/v3/keyboardPwd/add"
         payload = {
             "clientId": self.clientId,
             "accessToken": self.accessToken,
             "lockId": lock_id,
-            "keyboardPwdType": 3,
+            "keyboardPwd": pin,
+            "keyboardPwdType": 3,  # period code
             "startDate": self._to_ms(starts_at),
             "endDate": self._to_ms(ends_at),
+            "addType": 1,  # cloud
             "date": self._now_ms(),
         }
         try:
@@ -153,7 +157,7 @@ class TTLockProvider(BaseLockProvider):
             data = self._handle_response(response)
             return CodeResult(
                 code_id=str(data["keyboardPwdId"]),
-                pin=data["keyboardPwd"],
+                pin=pin,
                 lock_id=str(lock_id),
                 starts_at=starts_at,
                 ends_at=ends_at,
@@ -222,7 +226,6 @@ class TTLockProvider(BaseLockProvider):
     # ------------------------------------------------------------------
 
     def set_auto_lock_time(self, lock_id: int, seconds: int, type: int = 2):
-        self._ensure_token()
         url = f"{BASE_URL}/v3/lock/setAutoLockTime"
         payload = {
             "clientId": self.clientId,
