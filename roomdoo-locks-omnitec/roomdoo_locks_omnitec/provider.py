@@ -1,4 +1,5 @@
 import requests
+import secrets
 from datetime import datetime
 
 from roomdoo_locks_base import BaseLockProvider, CodeResult
@@ -113,7 +114,7 @@ class OmnitecProvider(BaseLockProvider):
             if errcode == -3036:
                 raise LockOfflineError(f"Lock is offline [{errcode}]: {description}")
             if errcode == -3037:
-                raise LockOperationError(f"Lock is busy [{errcode}]: {description}")
+                raise LockOfflineError(f"Lock is busy [{errcode}]: {description}")
             if errcode == -4043:
                 raise LockOperationError(f"Function not supported [{errcode}]: {description}")
             if errcode == 10001:
@@ -167,14 +168,16 @@ class OmnitecProvider(BaseLockProvider):
 
     def create_code(self, lock_id: str, starts_at: datetime, ends_at: datetime) -> CodeResult:
         self._validate_time_range(starts_at, ends_at)
-        return self._do_create_code(lock_id, starts_at, ends_at)
+        pin = f"{secrets.randbelow(1_000_000):06d}"
+        return self._do_create_code(lock_id, pin, starts_at, ends_at)
 
     # ── _do_create_code ──────────────────────────────────────────────────────
 
-    def _do_create_code(self, lock_id: str, starts_at: datetime, ends_at: datetime) -> CodeResult:
-        response = requests.get(f"{self.BASE_URL}/password", params=self._params({
+    def _do_create_code(self, lock_id: str, pin: str, starts_at: datetime, ends_at: datetime) -> CodeResult:
+        response = requests.post(f"{self.BASE_URL}/password", params=self._params({
             "ID":        lock_id,
-            "type":      3,
+            "password":  pin,
+            "type":      2,
             "startDate": self._to_ms(starts_at),
             "endDate":   self._to_ms(ends_at)
         }))
