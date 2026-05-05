@@ -1,5 +1,3 @@
-from encodings.punycode import digits
-
 import requests
 import secrets
 from datetime import datetime, timezone
