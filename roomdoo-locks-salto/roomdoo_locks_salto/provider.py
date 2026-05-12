@@ -27,12 +27,13 @@ class SaltoProvider(BaseLockProvider):
         "acc":  "https://clp-accept-user.my-clay.com",
     }
 
-    def __init__(self, clientId: str, clientSecret: str, username: str, password: str, siteId: str):
+    def __init__(self, clientId: str, clientSecret: str, username: str, password: str, siteId: str, env: str = "prod"):
         self.clientId     = clientId
         self.clientSecret = clientSecret
         self.username     = username
         self.password     = password
         self.siteId = siteId
+        self.env = env
         self.accessToken = None
         self._authenticate()
 
@@ -40,7 +41,7 @@ class SaltoProvider(BaseLockProvider):
 
     def _authenticate(self):
         try:
-            response = requests.post(f"{self.IDENTITY_HOSTS['acc']}/connect/token", 
+            response = requests.post(f"{self.IDENTITY_HOSTS[self.env]}/connect/token", 
             headers={
                 "Content-Type" : "application/x-www-form-urlencoded",
                 "Authorization" : "Basic " + base64.b64encode(f"{self.clientId}:{self.clientSecret}".encode()).decode() 
@@ -53,7 +54,6 @@ class SaltoProvider(BaseLockProvider):
             })
             self._handle_response(response)
             body = response.json()
-            print(body)
             if "access_token" not in body:
                 raise LockAuthError("Invalid credentials")
             self.accessToken  = body["access_token"]
@@ -67,7 +67,6 @@ class SaltoProvider(BaseLockProvider):
         if response.status_code == 204:
             return None
 
-        # 200 con body vacío (algunos endpoints DELETE/PATCH devuelven 200 sin body)
         if not response.text.strip():
             return None
 
@@ -133,7 +132,13 @@ class SaltoProvider(BaseLockProvider):
 
     def create_code(self, lock_id: str, start_date: datetime, end_date: datetime, first_name: str, last_name: str, role_id: str, email: str = "[EMAIL_ADDRESS]", access_group_name: str = "Grupo de Acceso") -> CodeResult:
         self._validate_time_range(start_date, end_date)
-        self._do_create_code(lock_id, start_date, end_date, first_name, last_name, role_id, email, access_group_name)
+        return self._do_create_code(lock_id, start_date, end_date, first_name, last_name, role_id, email, access_group_name)
+
+    # ── delete_user ──────────────────────
+
+    def delete_user(self, site_user_id: str) -> bool:
+        self._delete_user_from_site(site_user_id)
+        return True
 
     # ── _do_create_code ──────────────────────
 
@@ -161,13 +166,12 @@ class SaltoProvider(BaseLockProvider):
 
     def _get_access_groups_from_site(self) -> list:
         try:
-            response = requests.get(f"{self.API_HOSTS['acc']}/v1.2/sites/{self.siteId}/access_groups", 
+            response = requests.get(f"{self.API_HOSTS[self.env]}/v1.2/sites/{self.siteId}/access_groups", 
             headers={
                 "Authorization" : "Bearer " + self.accessToken
             })
             self._handle_response(response)
             body = response.json()
-            print(body)
             if "items" not in body:
                 raise LockOperationError("API did not return any Access Groups")
             return body["items"]
@@ -178,13 +182,12 @@ class SaltoProvider(BaseLockProvider):
 
     def _get_time_schedules_from_access_group(self, access_group_id: str) -> list:
         try:
-            response = requests.get(f"{self.API_HOSTS['acc']}/v1.1/sites/{self.siteId}/access_groups/{access_group_id}/time_schedules", 
+            response = requests.get(f"{self.API_HOSTS[self.env]}/v1.1/sites/{self.siteId}/access_groups/{access_group_id}/time_schedules", 
             headers={
                 "Authorization" : "Bearer " + self.accessToken
             })
             self._handle_response(response)
             body = response.json()
-            print(body)
             if "items" not in body:
                 raise LockOperationError("API did not return any Time Schedules")
             return body["items"]
@@ -195,13 +198,12 @@ class SaltoProvider(BaseLockProvider):
 
     def _get_users_from_site(self) -> list:
         try:
-            response = requests.get(f"{self.API_HOSTS['acc']}/v1.2/sites/{self.siteId}/users", 
+            response = requests.get(f"{self.API_HOSTS[self.env]}/v1.2/sites/{self.siteId}/users", 
             headers={
                 "Authorization" : "Bearer " + self.accessToken
             })
             self._handle_response(response)
             body = response.json()
-            print(body)
             if "items" not in body:
                 raise LockOperationError("API did not return any Users")
             return body["items"]
@@ -212,13 +214,12 @@ class SaltoProvider(BaseLockProvider):
 
     def _get_roles_from_site(self) -> list:
         try:
-            response = requests.get(f"{self.API_HOSTS['acc']}/v1.2/sites/{self.siteId}/roles", 
+            response = requests.get(f"{self.API_HOSTS[self.env]}/v1.2/sites/{self.siteId}/roles", 
             headers={
                 "Authorization" : "Bearer " + self.accessToken
             })
             self._handle_response(response)
             body = response.json()
-            print(body)
             if "items" not in body:
                 raise LockOperationError("API did not return any Users")
             return body["items"]
@@ -229,7 +230,7 @@ class SaltoProvider(BaseLockProvider):
 
     def _add_user_to_site(self, first_name: str, last_name: str, role_id: str, email: str) -> dict:
         try:
-            response = requests.post(f"{self.API_HOSTS['acc']}/v1.2/sites/{self.siteId}/users", 
+            response = requests.post(f"{self.API_HOSTS[self.env]}/v1.2/sites/{self.siteId}/users", 
             headers={
                 "Content-Type" : "application/json",
                 "Authorization" : "Bearer " + self.accessToken
@@ -251,7 +252,6 @@ class SaltoProvider(BaseLockProvider):
             })
             self._handle_response(response)
             body = response.json()
-            print(body)
             if "id" not in body:
                 raise LockOperationError("API did not return a site_user_id")
             if "user" not in body:
@@ -271,7 +271,7 @@ class SaltoProvider(BaseLockProvider):
 
     def _delete_user_from_site(self, site_user_id: str) -> bool:
         try:
-            response = requests.delete(f"{self.API_HOSTS['acc']}/v1.2/sites/{self.siteId}/users/{site_user_id}", 
+            response = requests.delete(f"{self.API_HOSTS[self.env]}/v1.2/sites/{self.siteId}/users/{site_user_id}", 
             headers={
                 "Authorization" : "Bearer " + self.accessToken
             })
@@ -284,7 +284,7 @@ class SaltoProvider(BaseLockProvider):
 
     def _subscribe_user_to_site(self, site_user_id: str) -> bool:
         try:
-            response = requests.patch(f"{self.API_HOSTS['acc']}/v1.2/sites/{self.siteId}/users/{site_user_id}/subscription", 
+            response = requests.patch(f"{self.API_HOSTS[self.env]}/v1.2/sites/{self.siteId}/users/{site_user_id}/subscription", 
             headers={
                 "Content-Type" : "application/json",
                 "Authorization" : "Bearer " + self.accessToken
@@ -301,7 +301,7 @@ class SaltoProvider(BaseLockProvider):
 
     def _unsubscribe_user_from_site(self, site_user_id: str) -> bool:
         try:
-            response = requests.patch(f"{self.API_HOSTS['acc']}/v1.2/sites/{self.siteId}/users/{site_user_id}/subscription", 
+            response = requests.patch(f"{self.API_HOSTS[self.env]}/v1.2/sites/{self.siteId}/users/{site_user_id}/subscription", 
             headers={
                 "Content-Type" : "application/json",
                 "Authorization" : "Bearer " + self.accessToken
@@ -318,7 +318,7 @@ class SaltoProvider(BaseLockProvider):
 
     def _add_access_group_to_site(self, access_group_name: str) -> str:
         try:
-            response = requests.post(f"{self.API_HOSTS['acc']}/v1.2/sites/{self.siteId}/access_groups", 
+            response = requests.post(f"{self.API_HOSTS[self.env]}/v1.2/sites/{self.siteId}/access_groups", 
             headers={
                 "Content-Type" : "application/json",
                 "Authorization" : "Bearer " + self.accessToken
@@ -328,7 +328,6 @@ class SaltoProvider(BaseLockProvider):
             })
             self._handle_response(response)
             body = response.json()
-            print(body)
             if "id" not in body:
                 raise LockOperationError("API did not return an access_group_id")
             access_group_id = body["id"]
@@ -340,7 +339,7 @@ class SaltoProvider(BaseLockProvider):
 
     def _delete_access_group_from_site(self, access_group_id: str) -> bool:
         try:
-            response = requests.delete(f"{self.API_HOSTS['acc']}/v1.2/sites/{self.siteId}/access_groups/{access_group_id}", 
+            response = requests.delete(f"{self.API_HOSTS[self.env]}/v1.2/sites/{self.siteId}/access_groups/{access_group_id}", 
             headers={
                 "Authorization" : "Bearer " + self.accessToken
             })
@@ -353,7 +352,7 @@ class SaltoProvider(BaseLockProvider):
 
     def _add_time_schedule_to_access_group(self, access_group_id: str, start_date: datetime, end_date: datetime) -> dict:
         try:
-            response = requests.post(f"{self.API_HOSTS['acc']}/v1.1/sites/{self.siteId}/access_groups/{access_group_id}/time_schedules", 
+            response = requests.post(f"{self.API_HOSTS[self.env]}/v1.1/sites/{self.siteId}/access_groups/{access_group_id}/time_schedules", 
             headers={
                 "Content-Type" : "application/json",
                 "Authorization" : "Bearer " + self.accessToken
@@ -373,7 +372,6 @@ class SaltoProvider(BaseLockProvider):
             })
             self._handle_response(response)
             body = response.json()
-            print(body)
             if "id" not in body:
                 raise LockOperationError("API did not return a time_schedule_id")
             time_schedule_id = body["id"]
@@ -395,7 +393,7 @@ class SaltoProvider(BaseLockProvider):
 
     def _modify_time_schedule_in_access_group(self, access_group_id: str, time_schedule_id: str, start_date: datetime, end_date: datetime) -> dict:
         try:
-            response = requests.patch(f"{self.API_HOSTS['acc']}/v1.1/sites/{self.siteId}/access_groups/{access_group_id}/time_schedules/{time_schedule_id}", 
+            response = requests.patch(f"{self.API_HOSTS[self.env]}/v1.1/sites/{self.siteId}/access_groups/{access_group_id}/time_schedules/{time_schedule_id}", 
             headers={
                 "Content-Type" : "application/json",
                 "Authorization" : "Bearer " + self.accessToken
@@ -415,7 +413,6 @@ class SaltoProvider(BaseLockProvider):
             })
             self._handle_response(response)
             body = response.json()
-            print(body)
             if "id" not in body:
                 raise LockOperationError("API did not return a time_schedule_id")
             time_schedule_id = body["id"]
@@ -437,7 +434,7 @@ class SaltoProvider(BaseLockProvider):
 
     def _delete_time_schedule_from_access_group(self, access_group_id: str, time_schedule_id: str) -> bool:
         try:
-            response = requests.delete(f"{self.API_HOSTS['acc']}/v1.1/sites/{self.siteId}/access_groups/{access_group_id}/time_schedules/{time_schedule_id}", 
+            response = requests.delete(f"{self.API_HOSTS[self.env]}/v1.1/sites/{self.siteId}/access_groups/{access_group_id}/time_schedules/{time_schedule_id}", 
             headers={
                 "Authorization" : "Bearer " + self.accessToken
             })
@@ -450,7 +447,7 @@ class SaltoProvider(BaseLockProvider):
 
     def _add_user_to_access_group(self, access_group_id: str, user_id: str) -> bool:
         try:
-            response = requests.post(f"{self.API_HOSTS['acc']}/v1.2/sites/{self.siteId}/access_groups/{access_group_id}/users", 
+            response = requests.post(f"{self.API_HOSTS[self.env]}/v1.2/sites/{self.siteId}/access_groups/{access_group_id}/users", 
             headers={
                 "Content-Type" : "application/json",
                 "Authorization" : "Bearer " + self.accessToken
@@ -460,7 +457,6 @@ class SaltoProvider(BaseLockProvider):
             })
             self._handle_response(response)
             body = response.json()
-            print(body)
             return True
         except requests.exceptions.ConnectionError:
             raise LockConnectionError("Unable to connect to Salto API")
@@ -469,7 +465,7 @@ class SaltoProvider(BaseLockProvider):
 
     def _delete_user_from_access_group(self, access_group_id: str, user_id: str) -> bool:
         try:
-            response = requests.delete(f"{self.API_HOSTS['acc']}/v1.2/sites/{self.siteId}/access_groups/{access_group_id}/users/{user_id}", 
+            response = requests.delete(f"{self.API_HOSTS[self.env]}/v1.2/sites/{self.siteId}/access_groups/{access_group_id}/users/{user_id}", 
             headers={
                 "Authorization" : "Bearer " + self.accessToken
             })
@@ -482,7 +478,7 @@ class SaltoProvider(BaseLockProvider):
 
     def _add_lock_to_access_group(self, access_group_id: str, lock_id: str) -> bool:
         try:
-            response = requests.post(f"{self.API_HOSTS['acc']}/v1.2/sites/{self.siteId}/access_groups/{access_group_id}/locks", 
+            response = requests.post(f"{self.API_HOSTS[self.env]}/v1.2/sites/{self.siteId}/access_groups/{access_group_id}/locks", 
             headers={
                 "Content-Type" : "application/json",
                 "Authorization" : "Bearer " + self.accessToken
@@ -492,7 +488,6 @@ class SaltoProvider(BaseLockProvider):
             })
             self._handle_response(response)
             body = response.json()
-            print(body)
             return True
         except requests.exceptions.ConnectionError:
             raise LockConnectionError("Unable to connect to Salto API")
@@ -501,7 +496,7 @@ class SaltoProvider(BaseLockProvider):
 
     def _delete_lock_from_access_group(self, access_group_id: str, lock_id: str) -> bool:
         try:
-            response = requests.delete(f"{self.API_HOSTS['acc']}/v1.2/sites/{self.siteId}/access_groups/{access_group_id}/locks/{lock_id}", 
+            response = requests.delete(f"{self.API_HOSTS[self.env]}/v1.2/sites/{self.siteId}/access_groups/{access_group_id}/locks/{lock_id}", 
             headers={
                 "Authorization" : "Bearer " + self.accessToken
             })
@@ -514,7 +509,7 @@ class SaltoProvider(BaseLockProvider):
 
     def _create_modify_user_pin(self, access_group_id: str, site_user_id: str, lock_id: str, start_date: datetime, end_date: datetime) -> bool:
         try:
-            response = requests.put(f"{self.API_HOSTS['acc']}/v1.2/sites/{self.siteId}/users/{site_user_id}/pin", 
+            response = requests.put(f"{self.API_HOSTS[self.env]}/v1.2/sites/{self.siteId}/users/{site_user_id}/pin", 
             headers={
                 "Content-Type" : "application/json",
                 "Authorization" : "Bearer " + self.accessToken
@@ -522,7 +517,6 @@ class SaltoProvider(BaseLockProvider):
             json={
             })
             self._handle_response(response)
-            print(response.text.strip().strip('"'))
             pin = response.text.strip().strip('"')
             return CodeResult(
                 code_id   = access_group_id,
