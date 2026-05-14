@@ -137,8 +137,9 @@ class TTLockProvider(BaseLockProvider):
     # ------------------------------------------------------------------
 
     def _do_create_code(self, lock_id: str, starts_at: datetime, ends_at: datetime) -> CodeResult:
-        digits = "123456789"
+        digits = "1234567"
         pin = "".join(secrets.choice(digits) for _ in range(6))
+        print(pin)
 
         url = f"{BASE_URL}/v3/keyboardPwd/add"
         payload = {
@@ -149,7 +150,7 @@ class TTLockProvider(BaseLockProvider):
             "keyboardPwdType": 3,  # period code
             "startDate": self._to_ms(starts_at),
             "endDate": self._to_ms(ends_at),
-            "addType": 1,  # cloud
+            "addType": 2,  # gateway
             "date": self._now_ms(),
         }
         try:
@@ -181,17 +182,36 @@ class TTLockProvider(BaseLockProvider):
         except requests.exceptions.RequestException as e:
             raise LockConnectionError(f"Failed to connect to TTLock API: {str(e)}")
 
-    def _do_modify_code(self, lock_id: str, code_id: str, starts_at: datetime, ends_at: datetime) -> CodeResult:
-        digits = "123456789"
-        new_pin = "".join(secrets.choice(digits) for _ in range(6))
+    def _get_lock_passcodes(self, lock_id: str, code_id: str) -> str:
+        """Fetch the PIN of a specific passcode by its ID."""
+        url = f"{BASE_URL}/v3/lock/listKeyboardPwd"
+        params = {
+            "clientId": self.clientId,
+            "accessToken": self.accessToken,
+            "lockId": lock_id,
+            "pageNo": 1,
+            "pageSize": 200,
+            "orderBy": 1,
+            "date": self._now_ms(),
+        }
+        try:
+            data = self._handle_response(requests.get(url, params=params))
+            pin = next(
+                (p["keyboardPwd"] for p in data.get("list", []) if str(p["keyboardPwdId"]) == code_id),
+                ""
+            )
+            return pin
+        except requests.exceptions.RequestException as e:
+            raise LockConnectionError(f"Failed to connect to TTLock API: {str(e)}")
 
+
+    def _do_modify_code(self, lock_id: str, code_id: str, starts_at: datetime, ends_at: datetime) -> CodeResult:
         url = f"{BASE_URL}/v3/keyboardPwd/change"
         payload = {
             "clientId": self.clientId,
             "accessToken": self.accessToken,
             "lockId": lock_id,
             "keyboardPwdId": code_id,
-            "newKeyboardPwd": new_pin,
             "startDate": self._to_ms(starts_at),
             "endDate": self._to_ms(ends_at),
             "changeType": 2,
@@ -199,15 +219,17 @@ class TTLockProvider(BaseLockProvider):
         }
         try:
             self._handle_response(requests.post(url, data=payload))
-            return CodeResult(
-                code_id=code_id,
-                pin=new_pin,
-                lock_id=str(lock_id),
-                starts_at=starts_at,
-                ends_at=ends_at,
-            )
         except requests.exceptions.RequestException as e:
             raise LockConnectionError(f"Failed to connect to TTLock API: {str(e)}")
+
+        pin = self._get_lock_passcodes(lock_id, code_id)
+        return CodeResult(
+            code_id=code_id,
+            pin=pin,
+            lock_id=str(lock_id),
+            starts_at=starts_at,
+            ends_at=ends_at,
+        )
 
     # ------------------------------------------------------------------
     # Lock info
