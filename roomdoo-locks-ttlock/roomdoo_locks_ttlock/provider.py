@@ -69,7 +69,7 @@ class TTLockProvider(BaseLockProvider):
                 raise LockNotFoundError(f"Lock not found [{errcode}]: {errmsg}")
             # Frozen lock
             if errcode == -2025:
-                raise LockOperationError(f"Lock is frozen [{errcode}]: {errmsg}")
+                raise LockConnectionError(f"Lock is frozen [{errcode}]: {errmsg}")
             # The function is not supported for this lock
             if errcode == -4043:
                 raise LockOperationError(f"Function not supported [{errcode}]: {errmsg}")
@@ -87,6 +87,8 @@ class TTLockProvider(BaseLockProvider):
              -3003: Gateway is busy'''
             if errcode in (-3002, -3003):
                 raise LockOfflineError(f"Gateway error [{errcode}]: {errmsg}")
+            if errcode == -3009:
+                raise LockOperationError(f"Lock is full of passcodes. Limit is 250 [{errcode}]: {errmsg}")
             #Lock offline
             if errcode == -3036:
                 raise LockOfflineError(f"Lock is offline [{errcode}]: {errmsg}")
@@ -135,8 +137,9 @@ class TTLockProvider(BaseLockProvider):
     # ------------------------------------------------------------------
 
     def _do_create_code(self, lock_id: str, starts_at: datetime, ends_at: datetime) -> CodeResult:
-        digits = "123456789"
+        digits = "1234567"
         pin = "".join(secrets.choice(digits) for _ in range(6))
+        print(pin)
 
         url = f"{BASE_URL}/v3/keyboardPwd/add"
         payload = {
@@ -147,7 +150,7 @@ class TTLockProvider(BaseLockProvider):
             "keyboardPwdType": 3,  # period code
             "startDate": self._to_ms(starts_at),
             "endDate": self._to_ms(ends_at),
-            "addType": 1,  # cloud
+            "addType": 2,  # gateway
             "date": self._now_ms(),
         }
         try:
@@ -179,10 +182,54 @@ class TTLockProvider(BaseLockProvider):
         except requests.exceptions.RequestException as e:
             raise LockConnectionError(f"Failed to connect to TTLock API: {str(e)}")
 
+    def _get_lock_passcodes(self, lock_id: str, code_id: str) -> str:
+        """Fetch the PIN of a specific passcode by its ID."""
+        url = f"{BASE_URL}/v3/lock/listKeyboardPwd"
+        params = {
+            "clientId": self.clientId,
+            "accessToken": self.accessToken,
+            "lockId": lock_id,
+            "pageNo": 1,
+            "pageSize": 200,
+            "orderBy": 1,
+            "date": self._now_ms(),
+        }
+        try:
+            data = self._handle_response(requests.get(url, params=params))
+            pin = next(
+                (p["keyboardPwd"] for p in data.get("list", []) if str(p["keyboardPwdId"]) == code_id),
+                ""
+            )
+            return pin
+        except requests.exceptions.RequestException as e:
+            raise LockConnectionError(f"Failed to connect to TTLock API: {str(e)}")
+
+
     def _do_modify_code(self, lock_id: str, code_id: str, starts_at: datetime, ends_at: datetime) -> CodeResult:
-        # TTLock does not support modifying codes directly — invalidate and recreate
-        self._do_invalidate_code(lock_id, code_id)
-        return self._do_create_code(lock_id, starts_at, ends_at)
+        url = f"{BASE_URL}/v3/keyboardPwd/change"
+        payload = {
+            "clientId": self.clientId,
+            "accessToken": self.accessToken,
+            "lockId": lock_id,
+            "keyboardPwdId": code_id,
+            "startDate": self._to_ms(starts_at),
+            "endDate": self._to_ms(ends_at),
+            "changeType": 2,
+            "date": self._now_ms(),
+        }
+        try:
+            self._handle_response(requests.post(url, data=payload))
+        except requests.exceptions.RequestException as e:
+            raise LockConnectionError(f"Failed to connect to TTLock API: {str(e)}")
+
+        pin = self._get_lock_passcodes(lock_id, code_id)
+        return CodeResult(
+            code_id=code_id,
+            pin=pin,
+            lock_id=str(lock_id),
+            starts_at=starts_at,
+            ends_at=ends_at,
+        )
 
     # ------------------------------------------------------------------
     # Lock info
