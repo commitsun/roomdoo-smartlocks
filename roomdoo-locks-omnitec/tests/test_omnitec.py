@@ -1,8 +1,9 @@
 import responses
 import pytest
+import requests
 from datetime import datetime, timezone, timedelta
 from roomdoo_locks_omnitec import OmnitecProvider
-from roomdoo_locks_base.exceptions import LockAuthError, LockOperationError
+from roomdoo_locks_base.exceptions import LockAuthError, LockConnectionError, LockOperationError
 
 CLIENT_ID     = "fake_client_id"
 CLIENT_SECRET = "fake_client_secret"
@@ -152,3 +153,49 @@ def test_invalidate_nonexistent_code():
     )
 
     assert provider.invalidate_code(LOCK_ID, "99999999") is True
+
+@responses.activate
+def test_get_locks():
+    mock_auth()
+    provider = OmnitecProvider(CLIENT_ID, CLIENT_SECRET, USERNAME, PASSWORD)
+
+    responses.get(
+        "https://api.rentandpass.com/api/lock/list",
+        json={
+            "list": [
+                {"lockId": 8279953, "lockAlias": "0101"},
+                {"lockId": 8279954, "lockAlias": "0102"},
+            ]
+        }
+    )
+
+    result = provider._do_get_locks()
+    assert len(result) == 2
+    assert result[0] == [8279953, "0101"]
+    assert result[1] == [8279954, "0102"]
+
+@responses.activate
+def test_get_locks_empty():
+    mock_auth()
+    provider = OmnitecProvider(CLIENT_ID, CLIENT_SECRET, USERNAME, PASSWORD)
+
+    responses.get(
+        "https://api.rentandpass.com/api/lock/list",
+        json={"list": []}
+    )
+
+    result = provider._do_get_locks()
+    assert result == []
+
+@responses.activate
+def test_get_locks_connection_error():
+    mock_auth()
+    provider = OmnitecProvider(CLIENT_ID, CLIENT_SECRET, USERNAME, PASSWORD)
+
+    responses.get(
+        "https://api.rentandpass.com/api/lock/list",
+        body=requests.exceptions.ConnectionError()
+    )
+
+    with pytest.raises(LockConnectionError):
+        provider._do_get_locks()

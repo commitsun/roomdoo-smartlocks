@@ -242,3 +242,23 @@ class OmnitecProvider(BaseLockProvider):
             starts_at = starts_at,
             ends_at   = ends_at
         )
+    
+    # ── _do_get_locks ──────────────────────────────────────────────────────
+
+    def _do_get_locks(self) -> list:
+        try:
+            response = requests.get(f"{self.BASE_URL}/lock/list", params=self._params({
+                "itemsPerPage":         999,
+            }))
+            self._handle_response(response)
+            body = response.json()
+
+        except requests.exceptions.ConnectionError:
+            raise LockConnectionError("Unable to connect to Omnitec API")
+
+        locks = []
+
+        for lock in body["list"]:
+            locks.append([lock["lockId"],lock["lockAlias"]])
+        
+        return locks
