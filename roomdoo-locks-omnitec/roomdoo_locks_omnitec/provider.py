@@ -166,9 +166,12 @@ class OmnitecProvider(BaseLockProvider):
 
     # ── create_code ──────────────────────
 
-    def create_code(self, lock_id: str, starts_at: datetime, ends_at: datetime) -> CodeResult:
+    def create_code(self, lock_id: str, starts_at: datetime, ends_at: datetime, pin: str = "") -> CodeResult:
         self._validate_time_range(starts_at, ends_at)
-        pin = f"{secrets.randbelow(1_000_000):06d}"
+
+        if pin == "":
+            pin = f"{secrets.randbelow(1_000_000):06d}"
+        
         return self._do_create_code(lock_id, pin, starts_at, ends_at)
 
     # ── _do_create_code ──────────────────────────────────────────────────────
@@ -184,12 +187,12 @@ class OmnitecProvider(BaseLockProvider):
         self._handle_response(response)
         body = response.json()
 
-        if "keyboardPwd" not in body:
+        if "keyboardPwdId" not in body:
             raise LockOperationError("API did not return a random PIN code")
 
         return CodeResult(
             code_id   = str(body["keyboardPwdId"]),
-            pin       = body["keyboardPwd"],
+            pin       = pin,
             lock_id   = lock_id,
             starts_at = starts_at,
             ends_at   = ends_at

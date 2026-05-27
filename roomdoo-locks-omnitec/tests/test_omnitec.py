@@ -66,7 +66,7 @@ def test_create_code(time_range):
     starts_at, ends_at = time_range
     responses.post(
         "https://api.rentandpass.com/api/password",
-        json={"keyboardPwd": "533463", "keyboardPwdId": 7107456}
+        json={"keyboardPwdId": 7107456}
     )
     responses.delete(
         "https://api.rentandpass.com/api/password",
@@ -74,7 +74,29 @@ def test_create_code(time_range):
     )
 
     result = provider.create_code(LOCK_ID, starts_at, ends_at)
-    assert result.pin == "533463"
+    assert len(result.pin) == 6
+    assert result.pin.isdigit()
+    assert result.code_id == "7107456"
+
+    provider.invalidate_code(LOCK_ID, result.code_id)
+
+@responses.activate
+def test_create_code_custom_pin(time_range):
+    mock_auth()
+    provider = OmnitecProvider(CLIENT_ID, CLIENT_SECRET, USERNAME, PASSWORD)
+
+    starts_at, ends_at = time_range
+    responses.post(
+        "https://api.rentandpass.com/api/password",
+        json={"keyboardPwdId": 7107456}
+    )
+    responses.delete(
+        "https://api.rentandpass.com/api/password",
+        json={"errcode": 0}
+    )
+
+    result = provider.create_code(LOCK_ID, starts_at, ends_at, pin="0123456")
+    assert result.pin == "0123456"
     assert result.code_id == "7107456"
 
     provider.invalidate_code(LOCK_ID, result.code_id)
