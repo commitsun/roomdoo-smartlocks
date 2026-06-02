@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 from datetime import datetime, timedelta
 
-from roomdoo_locks_base.models import CodeResult
+from roomdoo_locks_base.models import AccessGrant
 
 _ZERO = timedelta(0)
 
@@ -13,9 +13,17 @@ class BaseLockProvider(ABC):
     Each vendor implements this class. The constructor receives vendor-specific
     credentials and internally manages tokens, refresh and retries.
 
-    Subclasses override the ``_do_*`` methods. The public methods handle
-    common validation (UTC datetimes, starts_at < ends_at) before
-    delegating to the vendor-specific implementation.
+    The interface is expressed in terms of *guest access*, not individual
+    passcodes: the caller asks to grant one guest access to a **set of locks**
+    for a validity window and gets back a single credential plus an opaque
+    ``ref``. How that maps onto the vendor's primitives — a passcode replicated
+    on each lock (TTLock/Omnitec), or a user assigned to a lock group (Salto) —
+    is entirely the vendor's concern, kept inside the adapter. The caller never
+    orchestrates lock-by-lock.
+
+    Subclasses override the ``_do_*`` methods. The public methods handle common
+    validation (UTC datetimes, starts_at < ends_at) before delegating to the
+    vendor-specific implementation.
     """
 
     @staticmethod
@@ -26,87 +34,104 @@ class BaseLockProvider(ABC):
         if starts_at >= ends_at:
             raise ValueError("starts_at must be before ends_at")
 
-    def create_code(self, lock_id: str, starts_at: datetime, ends_at: datetime) -> CodeResult:
+    def grant_access(
+        self,
+        lock_ids: list,
+        starts_at: datetime,
+        ends_at: datetime,
+        pin: str = None,
+    ) -> AccessGrant:
         """
-        Generate a PIN code on the lock, valid between starts_at and ends_at.
+        Grant one guest access to ``lock_ids`` between starts_at and ends_at.
+
+        The guest uses a single credential (PIN) on every lock of the set.
+        The vendor generates the PIN unless ``pin`` is given (e.g. to reuse an
+        existing one). The returned :class:`AccessGrant` carries that PIN and an
+        opaque ``ref`` to be stored and handed back to :meth:`modify_access` /
+        :meth:`revoke_access`.
 
         Args:
-            lock_id: Lock identifier on the vendor platform.
+            lock_ids: Lock identifiers on the vendor platform.
             starts_at: Start of validity window (UTC).
             ends_at: End of validity window (UTC).
+            pin: Optional credential to set; vendor-generated when omitted.
 
         Returns:
-            CodeResult with the created code data and effective datetimes.
+            AccessGrant with the credential, opaque ref and effective dates.
 
         Raises:
-            ValueError: Non-UTC datetimes or starts_at >= ends_at.
+            ValueError: Non-UTC datetimes, starts_at >= ends_at, empty lock_ids.
             LockAuthError: Invalid credentials.
-            LockNotFoundError: Lock not found.
+            LockNotFoundError: A lock was not found.
             LockConnectionError: API unreachable after retries.
             LockOperationError: API rejected the operation.
         """
         self._validate_time_range(starts_at, ends_at)
-        return self._do_create_code(lock_id, starts_at, ends_at)
+        if not lock_ids:
+            raise ValueError("lock_ids must not be empty")
+        return self._do_grant_access(list(lock_ids), starts_at, ends_at, pin)
 
     @abstractmethod
-    def _do_create_code(self, lock_id: str, starts_at: datetime, ends_at: datetime) -> CodeResult: ...
+    def _do_grant_access(
+        self,
+        lock_ids: list,
+        starts_at: datetime,
+        ends_at: datetime,
+        pin: str,
+    ) -> AccessGrant: ...
 
-    def invalidate_code(self, lock_id: str, code_id: str) -> bool:
+    def modify_access(
+        self, grant_ref: str, starts_at: datetime, ends_at: datetime
+    ) -> AccessGrant:
         """
-        Invalidate an existing code.
+        Modify the validity window of an existing grant.
 
-        Idempotent: if the code no longer exists or has already expired,
-        returns True without raising an exception.
+        The credential may change (vendors that delete+recreate internally);
+        callers must persist the returned ``ref`` and ``pin``.
 
         Args:
-            lock_id: Lock identifier.
-            code_id: Code identifier.
-
-        Returns:
-            True if the code is no longer functional after the call.
-
-        Raises:
-            LockAuthError: Invalid credentials.
-            LockConnectionError: API unreachable after retries.
-        """
-        return self._do_invalidate_code(lock_id, code_id)
-
-    @abstractmethod
-    def _do_invalidate_code(self, lock_id: str, code_id: str) -> bool: ...
-
-    def modify_code(self, lock_id: str, code_id: str, starts_at: datetime, ends_at: datetime) -> CodeResult:
-        """
-        Modify the validity window of an existing code.
-
-        If the vendor supports direct modification, the same PIN is kept.
-        Otherwise, a new code is created and the old one invalidated.
-        Callers must assume that code_id and pin may have changed.
-
-        Args:
-            lock_id: Lock identifier.
-            code_id: Code identifier to modify.
+            grant_ref: Opaque ref returned by :meth:`grant_access`.
             starts_at: New start of validity (UTC).
             ends_at: New end of validity (UTC).
 
         Returns:
-            CodeResult with the resulting code data.
+            AccessGrant with the resulting credential and ref.
 
         Raises:
             ValueError: Non-UTC datetimes or starts_at >= ends_at.
             LockAuthError: Invalid credentials.
-            LockNotFoundError: Lock not found.
-            LockCodeNotFoundError: Code not found.
             LockConnectionError: API unreachable after retries.
             LockOperationError: API rejected the operation.
-            LockCodeDeletionError: In create+delete flow, the new code was
-                created but the old one could not be invalidated. The caller
-                should update records with the new result and retry deletion.
         """
         self._validate_time_range(starts_at, ends_at)
-        return self._do_modify_code(lock_id, code_id, starts_at, ends_at)
+        return self._do_modify_access(grant_ref, starts_at, ends_at)
 
     @abstractmethod
-    def _do_modify_code(self, lock_id: str, code_id: str, starts_at: datetime, ends_at: datetime) -> CodeResult: ...
+    def _do_modify_access(
+        self, grant_ref: str, starts_at: datetime, ends_at: datetime
+    ) -> AccessGrant: ...
+
+    def revoke_access(self, grant_ref: str) -> bool:
+        """
+        Revoke an existing grant on every lock it covers.
+
+        Idempotent: a grant that no longer exists or has already expired
+        returns True without raising.
+
+        Args:
+            grant_ref: Opaque ref returned by :meth:`grant_access`.
+
+        Returns:
+            True if the grant is no longer functional after the call.
+
+        Raises:
+            LockAuthError: Invalid credentials.
+            LockConnectionError: API unreachable after retries.
+        """
+        return self._do_revoke_access(grant_ref)
+
+    @abstractmethod
+    def _do_revoke_access(self, grant_ref: str) -> bool: ...
 
     @abstractmethod
     def test_connection(self) -> bool:

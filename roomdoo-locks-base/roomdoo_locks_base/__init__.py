@@ -11,10 +11,11 @@ from roomdoo_locks_base.exceptions import (
     LockNoPermissionError,
     LockOfflineError,
 )
-from roomdoo_locks_base.models import CodeResult
+from roomdoo_locks_base.models import AccessGrant, CodeResult
 
 __all__ = [
     "BaseLockProvider",
+    "AccessGrant",
     "CodeResult",
     "LockAuthError",
     "LockCodeDeletionError",
