@@ -1,154 +1,147 @@
-import responses
+import json
+from datetime import datetime, timedelta, timezone
+
 import pytest
-from datetime import datetime, timezone, timedelta
+import responses
+
+from roomdoo_locks_base.exceptions import LockAuthError, LockOfflineError
 from roomdoo_locks_omnitec import OmnitecProvider
-from roomdoo_locks_base.exceptions import LockAuthError, LockOperationError
 
-CLIENT_ID     = "fake_client_id"
+CLIENT_ID = "fake_client_id"
 CLIENT_SECRET = "fake_client_secret"
-USERNAME      = "fake_user"
-PASSWORD      = "fake_pass"
-LOCK_ID       = "8279953"
+USERNAME = "fake_user"
+PASSWORD = "fake_pass"
+LOCK_A = "8279953"
+LOCK_B = "8279954"
 
-# Reusable authentication mock
+ADD_URL = "https://api.rentandpass.com/api/password"  # POST
+CHANGE_URL = "https://api.rentandpass.com/api/password"  # PUT
+DELETE_URL = "https://api.rentandpass.com/api/password"  # DELETE
+LIST_URL = "https://api.rentandpass.com/api/lock/passwords"  # GET
+
+
 def mock_auth():
     responses.get(
         "https://api.rentandpass.com/api/signin/token",
-        json={"access_token": "fake_token", "refresh_token": "fake_refresh"}
+        json={"access_token": "fake_token", "refresh_token": "fake_refresh"},
     )
 
+
 @pytest.fixture
-def time_range():
+def provider():
+    mock_auth()
+    return OmnitecProvider(CLIENT_ID, CLIENT_SECRET, USERNAME, PASSWORD)
+
+
+@pytest.fixture
+def window():
     starts_at = datetime.now(timezone.utc)
-    ends_at   = starts_at + timedelta(hours=1)
-    return starts_at, ends_at
+    return starts_at, starts_at + timedelta(hours=1)
 
 
 @responses.activate
 def test_connection():
     mock_auth()
     provider = OmnitecProvider(CLIENT_ID, CLIENT_SECRET, USERNAME, PASSWORD)
-    mock_auth()  # test_connection calls _authenticate again
+    mock_auth()
     assert provider.test_connection() is True
 
-@responses.activate
-def test_open_lock():
-    mock_auth()
-    provider = OmnitecProvider(CLIENT_ID, CLIENT_SECRET, USERNAME, PASSWORD)
-
-    responses.put(
-        "https://api.rentandpass.com/api/lock/unlock",
-        json={"errcode": 0}
-    )
-
-    assert provider.open_lock(LOCK_ID) is True
-
-
-@responses.activate
-def test_open_lock_error():
-    mock_auth()
-    provider = OmnitecProvider(CLIENT_ID, CLIENT_SECRET, USERNAME, PASSWORD)
-
-    responses.put(
-        "https://api.rentandpass.com/api/lock/unlock",
-        json={"errcode": -1, "errmsg": "Lock is offline"}
-    )
-
-    with pytest.raises(LockOperationError):
-        provider.open_lock(LOCK_ID)
-
-@responses.activate
-def test_create_code(time_range):
-    mock_auth()
-    provider = OmnitecProvider(CLIENT_ID, CLIENT_SECRET, USERNAME, PASSWORD)
-
-    starts_at, ends_at = time_range
-    responses.post(
-        "https://api.rentandpass.com/api/password",
-        json={"keyboardPwd": "533463", "keyboardPwdId": 7107456}
-    )
-    responses.delete(
-        "https://api.rentandpass.com/api/password",
-        json={"errcode": 0}
-    )
-
-    result = provider.create_code(LOCK_ID, starts_at, ends_at)
-    assert result.pin == "533463"
-    assert result.code_id == "7107456"
-
-    provider.invalidate_code(LOCK_ID, result.code_id)
-
-
-@responses.activate
-def test_modify_code(time_range):
-    mock_auth()
-    provider = OmnitecProvider(CLIENT_ID, CLIENT_SECRET, USERNAME, PASSWORD)
-
-    starts_at, ends_at = time_range
-    responses.post(
-        "https://api.rentandpass.com/api/password",
-        json={"keyboardPwd": "533463", "keyboardPwdId": 7107456}
-    )
-    result = provider.create_code(LOCK_ID, starts_at, ends_at)
-
-    new_ends_at = ends_at + timedelta(hours=1)
-    responses.put(
-        "https://api.rentandpass.com/api/password",
-        json={"errcode": 0}
-    )
-    responses.get(
-        "https://api.rentandpass.com/api/lock/passwords",
-        json={"list": [{"keyboardPwdId": 7107456, "keyboardPwd": "533463"}]}
-    )
-
-    modified = provider.modify_code(LOCK_ID, result.code_id, starts_at, new_ends_at)
-    assert modified.code_id == result.code_id
-
-    responses.delete(
-        "https://api.rentandpass.com/api/password",
-        json={"errcode": 0}
-    )
-    provider.invalidate_code(LOCK_ID, modified.code_id)
-
-
-@responses.activate
-def test_invalid_time_range(time_range):
-    mock_auth()
-    provider = OmnitecProvider(CLIENT_ID, CLIENT_SECRET, USERNAME, PASSWORD)
-
-    starts_at, ends_at = time_range
-    with pytest.raises(ValueError):
-        provider.create_code(LOCK_ID, ends_at, starts_at)
-
-
-@responses.activate
-def test_naive_datetime(time_range):
-    mock_auth()
-    provider = OmnitecProvider(CLIENT_ID, CLIENT_SECRET, USERNAME, PASSWORD)
-
-    starts_at, ends_at = time_range
-    with pytest.raises(ValueError):
-        provider.create_code(LOCK_ID, datetime.now(), ends_at)
 
 @responses.activate
 def test_invalid_credentials():
     responses.get(
         "https://api.rentandpass.com/api/signin/token",
         json={"error": "Unauthorized"},
-        status=401
+        status=401,
     )
     with pytest.raises(LockAuthError):
         OmnitecProvider(CLIENT_ID, CLIENT_SECRET, USERNAME, PASSWORD)
 
 
 @responses.activate
-def test_invalidate_nonexistent_code():
-    mock_auth()
-    provider = OmnitecProvider(CLIENT_ID, CLIENT_SECRET, USERNAME, PASSWORD)
+def test_grant_access_forces_pin_and_packs_ref(provider, window):
+    starts_at, ends_at = window
+    responses.post(ADD_URL, json={"keyboardPwdId": 111, "keyboardPwd": "135790"})
+    responses.post(ADD_URL, json={"keyboardPwdId": 222, "keyboardPwd": "135790"})
 
-    responses.delete(
-        "https://api.rentandpass.com/api/password",
-        json={"errcode": -2009, "errmsg": "Invalid Password"}
+    grant = provider.grant_access([LOCK_A, LOCK_B], starts_at, ends_at, pin="135790")
+
+    assert grant.pin == "135790"
+    assert json.loads(grant.ref) == [
+        {"ID": LOCK_A, "passID": "111"},
+        {"ID": LOCK_B, "passID": "222"},
+    ]
+
+
+@responses.activate
+def test_grant_access_generates_pin_when_omitted(provider, window):
+    starts_at, ends_at = window
+    responses.post(ADD_URL, json={"keyboardPwdId": 111})
+
+    grant = provider.grant_access([LOCK_A], starts_at, ends_at)
+
+    assert len(grant.pin) == OmnitecProvider.PASSCODE_LENGTH
+    assert set(grant.pin) <= set(OmnitecProvider.PASSCODE_ALPHABET)
+
+
+@responses.activate
+def test_grant_access_rolls_back_on_partial_failure(provider, window):
+    starts_at, ends_at = window
+    responses.post(ADD_URL, json={"keyboardPwdId": 111})
+    responses.post(ADD_URL, json={"errcode": -3002, "errmsg": "Gateway offline"})
+    responses.delete(DELETE_URL, json={"errcode": 0})
+
+    with pytest.raises(LockOfflineError):
+        provider.grant_access([LOCK_A, LOCK_B], starts_at, ends_at, pin="135790")
+
+    delete_calls = [
+        c
+        for c in responses.calls
+        if c.request.method == "DELETE" and c.request.url.startswith(DELETE_URL)
+    ]
+    assert len(delete_calls) == 1
+    assert "passID=111" in delete_calls[0].request.url
+
+
+@responses.activate
+def test_modify_access_returns_pin(provider, window):
+    starts_at, ends_at = window
+    new_ends_at = ends_at + timedelta(hours=2)
+    ref = json.dumps([{"ID": LOCK_A, "passID": "111"}])
+
+    responses.put(CHANGE_URL, json={"errcode": 0})
+    responses.get(
+        LIST_URL, json={"list": [{"keyboardPwdId": 111, "keyboardPwd": "135790"}]}
     )
 
-    assert provider.invalidate_code(LOCK_ID, "99999999") is True
+    grant = provider.modify_access(ref, starts_at, new_ends_at)
+
+    assert grant.pin == "135790"
+    assert grant.ref == ref
+    assert grant.ends_at == new_ends_at
+
+
+@responses.activate
+def test_revoke_access_deletes_every_lock(provider):
+    ref = json.dumps(
+        [{"ID": LOCK_A, "passID": "111"}, {"ID": LOCK_B, "passID": "222"}]
+    )
+    responses.delete(DELETE_URL, json={"errcode": 0})
+
+    assert provider.revoke_access(ref) is True
+    delete_calls = [c for c in responses.calls if c.request.method == "DELETE"]
+    assert len(delete_calls) == 2
+
+
+@responses.activate
+def test_revoke_access_is_idempotent(provider):
+    ref = json.dumps([{"ID": LOCK_A, "passID": "99999"}])
+    responses.delete(DELETE_URL, json={"errcode": -2009, "errmsg": "Invalid Password"})
+    assert provider.revoke_access(ref) is True
+
+
+@responses.activate
+def test_grant_access_rejects_bad_window(provider, window):
+    starts_at, ends_at = window
+    with pytest.raises(ValueError):
+        provider.grant_access([LOCK_A], ends_at, starts_at)

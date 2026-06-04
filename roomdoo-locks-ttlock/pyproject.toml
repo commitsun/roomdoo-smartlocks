@@ -18,3 +18,6 @@ Homepage = "https://roomdoo-locks-ttlock"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["roomdoo_locks_ttlock*"]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0", "mypy>=1.0", "responses>=0.25.0"]

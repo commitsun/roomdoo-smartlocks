@@ -1,14 +1,26 @@
-import responses
-import pytest
-from datetime import datetime, timezone, timedelta
-from roomdoo_locks_ttlock import TTLockProvider
-from roomdoo_locks_base.exceptions import LockAuthError, LockOperationError, LockOfflineError, LockNoPermissionError
+import json
+from datetime import datetime, timedelta, timezone
 
-CLIENT_ID     = "fake_client_id"
+import pytest
+import responses
+
+from roomdoo_locks_base.exceptions import (
+    LockAuthError,
+    LockOfflineError,
+)
+from roomdoo_locks_ttlock import TTLockProvider
+
+CLIENT_ID = "fake_client_id"
 CLIENT_SECRET = "fake_client_secret"
-USERNAME      = "fake_user"
-PASSWORD      = "fake_pass_md5"
-LOCK_ID       = "12345678"
+USERNAME = "fake_user"
+PASSWORD = "fake_pass_md5"
+LOCK_A = "12345678"
+LOCK_B = "87654321"
+
+ADD_URL = "https://euapi.ttlock.com/v3/keyboardPwd/add"
+CHANGE_URL = "https://euapi.ttlock.com/v3/keyboardPwd/change"
+DELETE_URL = "https://euapi.ttlock.com/v3/keyboardPwd/delete"
+LIST_URL = "https://euapi.ttlock.com/v3/lock/listKeyboardPwd"
 
 
 def mock_auth():
@@ -17,17 +29,22 @@ def mock_auth():
         json={
             "access_token": "fake_access_token",
             "refresh_token": "fake_refresh_token",
-            "uid": 49543138,
             "expires_in": 6741404,
-            "token_type": "Bearer"
-        }
+            "token_type": "Bearer",
+        },
     )
 
+
 @pytest.fixture
-def time_range():
+def provider():
+    mock_auth()
+    return TTLockProvider(CLIENT_ID, CLIENT_SECRET, USERNAME, PASSWORD)
+
+
+@pytest.fixture
+def window():
     starts_at = datetime.now(timezone.utc)
-    ends_at   = starts_at + timedelta(hours=1)
-    return starts_at, ends_at
+    return starts_at, starts_at + timedelta(hours=1)
 
 
 @responses.activate
@@ -39,174 +56,122 @@ def test_connection():
 
 
 @responses.activate
-def test_create_code(time_range):
-    mock_auth()
-    provider = TTLockProvider(CLIENT_ID, CLIENT_SECRET, USERNAME, PASSWORD)
-
-    starts_at, ends_at = time_range
-    responses.post(
-        "https://euapi.ttlock.com/v3/keyboardPwd/get",
-        json={"keyboardPwd": "533463", "keyboardPwdId": 7107456}
-    )
-    responses.post(
-        "https://euapi.ttlock.com/v3/keyboardPwd/delete",
-        json={"errcode": 0}
-    )
-
-    result = provider.create_code(LOCK_ID, starts_at, ends_at)
-    assert result.pin == "533463"
-    assert result.code_id == "7107456"
-    assert result.lock_id == LOCK_ID
-    assert result.starts_at == starts_at
-    assert result.ends_at == ends_at
-
-    provider.invalidate_code(LOCK_ID, result.code_id)
-
-
-@responses.activate
-def test_create_code_error(time_range):
-    mock_auth()
-    provider = TTLockProvider(CLIENT_ID, CLIENT_SECRET, USERNAME, PASSWORD)
-
-    starts_at, ends_at = time_range
-    responses.post(
-        "https://euapi.ttlock.com/v3/keyboardPwd/get",
-        json={"errcode": -2012, "errmsg": "The Lock is not connected to any Gateway."}
-    )
-
-    with pytest.raises(LockOfflineError):
-        provider.create_code(LOCK_ID, starts_at, ends_at)
-
-
-@responses.activate
-def test_invalidate_code(time_range):
-    mock_auth()
-    provider = TTLockProvider(CLIENT_ID, CLIENT_SECRET, USERNAME, PASSWORD)
-
-    starts_at, ends_at = time_range
-    responses.post(
-        "https://euapi.ttlock.com/v3/keyboardPwd/get",
-        json={"keyboardPwd": "533463", "keyboardPwdId": 7107456}
-    )
-    result = provider.create_code(LOCK_ID, starts_at, ends_at)
-
-    responses.post(
-        "https://euapi.ttlock.com/v3/keyboardPwd/delete",
-        json={"errcode": 0}
-    )
-
-    assert provider.invalidate_code(LOCK_ID, result.code_id) is True
-
-
-@responses.activate
-def test_invalidate_nonexistent_code():
-    mock_auth()
-    provider = TTLockProvider(CLIENT_ID, CLIENT_SECRET, USERNAME, PASSWORD)
-
-    responses.post(
-        "https://euapi.ttlock.com/v3/keyboardPwd/delete",
-        json={"errcode": -2009, "errmsg": "Invalid Password"}
-    )
-
-    with pytest.raises(LockNoPermissionError):
-        provider.invalidate_code(LOCK_ID, "99999999")
-
-
-@responses.activate
-def test_get_lock_list():
-    mock_auth()
-    provider = TTLockProvider(CLIENT_ID, CLIENT_SECRET, USERNAME, PASSWORD)
-
-    responses.get(
-        "https://euapi.ttlock.com/v3/lock/list",
-        json={
-            "pageNo": 1,
-            "pageSize": 20,
-            "pages": 1,
-            "total": 2,
-            "list": [
-                {"lockId": 12345678, "lockAlias": "Puerta principal", "lockMac": "AA:BB:CC:DD:EE:FF", "electricQuantity": 85},
-                {"lockId": 87654321, "lockAlias": "Puerta trasera",   "lockMac": "FF:EE:DD:CC:BB:AA", "electricQuantity": 60},
-            ]
-        }
-    )
-
-    locks = provider.get_lock_list()
-    assert locks["total"] == 2
-    assert locks["list"][0]["lockAlias"] == "Puerta principal"
-
-
-@responses.activate
 def test_invalid_credentials():
     responses.post(
         "https://euapi.ttlock.com/oauth2/token",
-        json={"errcode": 10007, "errmsg": "invalid account or invalid password"}
+        json={"errcode": 10007, "errmsg": "invalid account or invalid password"},
     )
-
     with pytest.raises(LockAuthError):
         TTLockProvider(CLIENT_ID, CLIENT_SECRET, USERNAME, PASSWORD)
 
 
 @responses.activate
-def test_invalid_time_range(time_range):
-    mock_auth()
-    provider = TTLockProvider(CLIENT_ID, CLIENT_SECRET, USERNAME, PASSWORD)
+def test_grant_access_forces_pin_and_packs_ref(provider, window):
+    starts_at, ends_at = window
+    responses.post(ADD_URL, json={"keyboardPwdId": 111})
+    responses.post(ADD_URL, json={"keyboardPwdId": 222})
 
-    starts_at, ends_at = time_range
+    grant = provider.grant_access([LOCK_A, LOCK_B], starts_at, ends_at, pin="123456")
+
+    assert grant.pin == "123456"
+    assert json.loads(grant.ref) == [
+        {"lockId": LOCK_A, "keyboardPwdId": "111"},
+        {"lockId": LOCK_B, "keyboardPwdId": "222"},
+    ]
+    # The same PIN was pushed to every lock.
+    add_calls = [c for c in responses.calls if c.request.url.startswith(ADD_URL)]
+    assert len(add_calls) == 2
+    for call in add_calls:
+        assert "keyboardPwd=123456" in call.request.body
+
+
+@responses.activate
+def test_grant_access_generates_pin_when_omitted(provider, window):
+    starts_at, ends_at = window
+    responses.post(ADD_URL, json={"keyboardPwdId": 111})
+
+    grant = provider.grant_access([LOCK_A], starts_at, ends_at)
+
+    assert len(grant.pin) == TTLockProvider.PASSCODE_LENGTH
+    assert set(grant.pin) <= set(TTLockProvider.PASSCODE_ALPHABET)
+
+
+@responses.activate
+def test_grant_access_rolls_back_on_partial_failure(provider, window):
+    starts_at, ends_at = window
+    # First lock succeeds, second is offline -> whole grant must roll back.
+    responses.post(ADD_URL, json={"keyboardPwdId": 111})
+    responses.post(ADD_URL, json={"errcode": -3002, "errmsg": "Gateway is offline"})
+    responses.post(DELETE_URL, json={"errcode": 0})
+
+    with pytest.raises(LockOfflineError):
+        provider.grant_access([LOCK_A, LOCK_B], starts_at, ends_at, pin="123456")
+
+    delete_calls = [c for c in responses.calls if c.request.url.startswith(DELETE_URL)]
+    assert len(delete_calls) == 1
+    assert "keyboardPwdId=111" in delete_calls[0].request.body
+
+
+@responses.activate
+def test_modify_access_changes_each_lock_and_returns_pin(provider, window):
+    starts_at, ends_at = window
+    new_ends_at = ends_at + timedelta(hours=2)
+    ref = json.dumps([{"lockId": LOCK_A, "keyboardPwdId": "111"}])
+
+    responses.post(CHANGE_URL, json={"errcode": 0})
+    responses.get(
+        LIST_URL,
+        json={"list": [{"keyboardPwdId": 111, "keyboardPwd": "123456"}]},
+    )
+
+    grant = provider.modify_access(ref, starts_at, new_ends_at)
+
+    assert grant.pin == "123456"
+    assert grant.ref == ref
+    assert grant.ends_at == new_ends_at
+
+
+@responses.activate
+def test_revoke_access_deletes_every_lock(provider):
+    ref = json.dumps(
+        [
+            {"lockId": LOCK_A, "keyboardPwdId": "111"},
+            {"lockId": LOCK_B, "keyboardPwdId": "222"},
+        ]
+    )
+    responses.post(DELETE_URL, json={"errcode": 0})
+
+    assert provider.revoke_access(ref) is True
+    delete_calls = [c for c in responses.calls if c.request.url.startswith(DELETE_URL)]
+    assert len(delete_calls) == 2
+
+
+@responses.activate
+def test_grant_access_rejects_empty_lock_ids(provider, window):
+    starts_at, ends_at = window
     with pytest.raises(ValueError):
-        provider.create_code(LOCK_ID, ends_at, starts_at)
+        provider.grant_access([], starts_at, ends_at)
 
 
 @responses.activate
-def test_naive_datetime(time_range):
-    mock_auth()
-    provider = TTLockProvider(CLIENT_ID, CLIENT_SECRET, USERNAME, PASSWORD)
-
-    starts_at, ends_at = time_range
+def test_grant_access_rejects_bad_window(provider, window):
+    starts_at, ends_at = window
     with pytest.raises(ValueError):
-        provider.create_code(LOCK_ID, datetime.now(), ends_at)
+        provider.grant_access([LOCK_A], ends_at, starts_at)
 
 
 @responses.activate
-def test_expired_token(time_range):
-    mock_auth()
-    provider = TTLockProvider(CLIENT_ID, CLIENT_SECRET, USERNAME, PASSWORD)
-
-    starts_at, ends_at = time_range
-    responses.post(
-        "https://euapi.ttlock.com/v3/keyboardPwd/get",
-        json={"errcode": 10003, "errmsg": "token does not exist"}
-    )
-
-    with pytest.raises(LockAuthError):
-        provider.create_code(LOCK_ID, starts_at, ends_at)
+def test_grant_access_rejects_naive_datetime(provider, window):
+    _, ends_at = window
+    with pytest.raises(ValueError):
+        provider.grant_access([LOCK_A], datetime.now(), ends_at)
 
 
 @responses.activate
-def test_modify_code(time_range):
-    mock_auth()
-    provider = TTLockProvider(CLIENT_ID, CLIENT_SECRET, USERNAME, PASSWORD)
-
-    starts_at, ends_at = time_range
-    new_ends_at = ends_at + timedelta(hours=1)
-
-    # Create original code
-    responses.post(
-        "https://euapi.ttlock.com/v3/keyboardPwd/get",
-        json={"keyboardPwd": "533463", "keyboardPwdId": 7107456}
+def test_get_lock_list(provider):
+    responses.get(
+        "https://euapi.ttlock.com/v3/lock/list",
+        json={"total": 1, "list": [{"lockId": 12345678, "lockAlias": "Main"}]},
     )
-    result = provider.create_code(LOCK_ID, starts_at, ends_at)
-
-    # Invalidate old + create new
-    responses.post(
-        "https://euapi.ttlock.com/v3/keyboardPwd/delete",
-        json={"errcode": 0}
-    )
-    responses.post(
-        "https://euapi.ttlock.com/v3/keyboardPwd/get",
-        json={"keyboardPwd": "891234", "keyboardPwdId": 7107457}
-    )
-
-    modified = provider.modify_code(LOCK_ID, result.code_id, starts_at, new_ends_at)
-    assert modified.ends_at == new_ends_at
-    assert modified.pin == "891234"
+    locks = provider.get_lock_list()
+    assert locks["total"] == 1
