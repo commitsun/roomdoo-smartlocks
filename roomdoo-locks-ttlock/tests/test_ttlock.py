@@ -35,8 +35,10 @@ def mock_auth():
     )
 
 
-@pytest.fixture
-def provider():
+def make_provider():
+    """Build an authenticated provider. Must be called inside an active
+    ``responses`` context (i.e. from within an ``@responses.activate`` test),
+    since the constructor authenticates over HTTP."""
     mock_auth()
     return TTLockProvider(CLIENT_ID, CLIENT_SECRET, USERNAME, PASSWORD)
 
@@ -49,8 +51,7 @@ def window():
 
 @responses.activate
 def test_connection():
-    mock_auth()
-    provider = TTLockProvider(CLIENT_ID, CLIENT_SECRET, USERNAME, PASSWORD)
+    provider = make_provider()
     mock_auth()
     assert provider.test_connection() is True
 
@@ -66,7 +67,8 @@ def test_invalid_credentials():
 
 
 @responses.activate
-def test_grant_access_forces_pin_and_packs_ref(provider, window):
+def test_grant_access_forces_pin_and_packs_ref(window):
+    provider = make_provider()
     starts_at, ends_at = window
     responses.post(ADD_URL, json={"keyboardPwdId": 111})
     responses.post(ADD_URL, json={"keyboardPwdId": 222})
@@ -86,7 +88,8 @@ def test_grant_access_forces_pin_and_packs_ref(provider, window):
 
 
 @responses.activate
-def test_grant_access_generates_pin_when_omitted(provider, window):
+def test_grant_access_generates_pin_when_omitted(window):
+    provider = make_provider()
     starts_at, ends_at = window
     responses.post(ADD_URL, json={"keyboardPwdId": 111})
 
@@ -97,7 +100,8 @@ def test_grant_access_generates_pin_when_omitted(provider, window):
 
 
 @responses.activate
-def test_grant_access_rolls_back_on_partial_failure(provider, window):
+def test_grant_access_rolls_back_on_partial_failure(window):
+    provider = make_provider()
     starts_at, ends_at = window
     # First lock succeeds, second is offline -> whole grant must roll back.
     responses.post(ADD_URL, json={"keyboardPwdId": 111})
@@ -113,7 +117,8 @@ def test_grant_access_rolls_back_on_partial_failure(provider, window):
 
 
 @responses.activate
-def test_modify_access_changes_each_lock_and_returns_pin(provider, window):
+def test_modify_access_changes_each_lock_and_returns_pin(window):
+    provider = make_provider()
     starts_at, ends_at = window
     new_ends_at = ends_at + timedelta(hours=2)
     ref = json.dumps([{"lockId": LOCK_A, "keyboardPwdId": "111"}])
@@ -132,7 +137,8 @@ def test_modify_access_changes_each_lock_and_returns_pin(provider, window):
 
 
 @responses.activate
-def test_revoke_access_deletes_every_lock(provider):
+def test_revoke_access_deletes_every_lock():
+    provider = make_provider()
     ref = json.dumps(
         [
             {"lockId": LOCK_A, "keyboardPwdId": "111"},
@@ -147,28 +153,32 @@ def test_revoke_access_deletes_every_lock(provider):
 
 
 @responses.activate
-def test_grant_access_rejects_empty_lock_ids(provider, window):
+def test_grant_access_rejects_empty_lock_ids(window):
+    provider = make_provider()
     starts_at, ends_at = window
     with pytest.raises(ValueError):
         provider.grant_access([], starts_at, ends_at)
 
 
 @responses.activate
-def test_grant_access_rejects_bad_window(provider, window):
+def test_grant_access_rejects_bad_window(window):
+    provider = make_provider()
     starts_at, ends_at = window
     with pytest.raises(ValueError):
         provider.grant_access([LOCK_A], ends_at, starts_at)
 
 
 @responses.activate
-def test_grant_access_rejects_naive_datetime(provider, window):
+def test_grant_access_rejects_naive_datetime(window):
+    provider = make_provider()
     _, ends_at = window
     with pytest.raises(ValueError):
         provider.grant_access([LOCK_A], datetime.now(), ends_at)
 
 
 @responses.activate
-def test_get_lock_list(provider):
+def test_get_lock_list():
+    provider = make_provider()
     responses.get(
         "https://euapi.ttlock.com/v3/lock/list",
         json={"total": 1, "list": [{"lockId": 12345678, "lockAlias": "Main"}]},
