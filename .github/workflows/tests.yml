@@ -21,9 +21,9 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install -e "./roomdoo-locks-base"
+          pip install -e "./roomdoo-locks-base[dev]"
+          pip install -e "./roomdoo-locks-ttlock[dev]"
           pip install -e "./roomdoo-locks-omnitec[dev]"
 
       - name: Run tests
-        run: |
-          pytest roomdoo-locks-omnitec/tests/
+        run: pytest

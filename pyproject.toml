@@ -21,17 +21,4 @@ warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true
 [tool.pytest.ini_options]
-pythonpath = [
-    "roomdoo-locks-base",
-    "roomdoo-locks-ttlock",
-    "roomdoo-locks-omnitec",
-    "roomdoo-locks-salto"
-]
-
-[tool.pyright]
-extraPaths = [
-    "roomdoo-locks-base",
-    "roomdoo-locks-ttlock",
-    "roomdoo-locks-omnitec",
-    "roomdoo-locks-salto"
-]
+pythonpath = ["roomdoo-locks-base", "roomdoo-locks-ttlock"]
