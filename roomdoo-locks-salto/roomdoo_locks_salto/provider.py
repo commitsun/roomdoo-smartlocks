@@ -317,7 +317,7 @@ class SaltoProvider(BaseLockProvider):
         except requests.exceptions.ConnectionError:
             raise LockConnectionError("Unable to connect to Salto API")
 
-    # ── subscribe_user_to_site ──────────────────────────────────────────────────────
+    # ── _subscribe_user_to_site ──────────────────────────────────────────────────────
 
     def _subscribe_user_to_site(self, site_user_id: str) -> bool:
         try:
@@ -334,7 +334,7 @@ class SaltoProvider(BaseLockProvider):
         except requests.exceptions.ConnectionError:
             raise LockConnectionError("Unable to connect to Salto API")
 
-    # ── unsubscribe_user_from_site ──────────────────────────────────────────────────────
+    # ── _unsubscribe_user_from_site ──────────────────────────────────────────────────────
 
     def _unsubscribe_user_from_site(self, site_user_id: str) -> bool:
         try:
