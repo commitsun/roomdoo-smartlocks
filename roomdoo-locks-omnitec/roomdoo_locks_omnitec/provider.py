@@ -175,65 +175,75 @@ class OmnitecProvider(BaseLockProvider):
     def _params(self, extra: dict) -> dict:
         return {"clientId": self.clientId, "token": self.accessToken, **extra}
 
-    def _get_lock_passwords(self, lock_id: str) -> list:
-        response = requests.get(f"{self.BASE_URL}/lock/passwords", params=self._params({
-            "ID": lock_id
-        }))
-        self._handle_response(response)
-        return response.json().get("list", [])
-
-    # ── test_connection ──────────────────────────────────────────────────────
-
-    def test_connection(self) -> bool:
-        self._authenticate()
-        return True
-
-    # ── open_lock ────────────────────────────────────────────────────────────
-
-    def open_lock(self, lock_id: str) -> bool:
+    def _request(self, method: str, path: str, extra: dict) -> dict:
         try:
-            response = requests.put(f"{self.BASE_URL}/lock/unlock", params=self._params({
-                "ID": lock_id
-            }))
-            self._handle_response(response)
-            return True
+            response = requests.request(
+                method, f"{self.BASE_URL}{path}", params=self._params(extra)
+            )
         except requests.exceptions.ConnectionError:
             raise LockConnectionError("Unable to connect to Omnitec API")
+        return self._handle_response(response)
 
-    # ── create_code ──────────────────────
+    def _get_lock_passwords(self, lock_id) -> list:
+        body = self._request("GET", "/lock/passwords", {"ID": lock_id})
+        return body.get("list", [])
 
-    def create_code(self, lock_id: str, starts_at: datetime, ends_at: datetime) -> CodeResult:
-        self._validate_time_range(starts_at, ends_at)
-        pin = f"{secrets.randbelow(1_000_000):06d}"
-        return self._do_create_code(lock_id, pin, starts_at, ends_at)
+    def _read_pin(self, lock_id, pass_id: str) -> str:
+        for p in self._get_lock_passwords(lock_id):
+            if str(p["keyboardPwdId"]) == str(pass_id):
+                return p["keyboardPwd"]
+        return ""
+
+    def _generate_pin(self) -> str:
+        return "".join(
+            secrets.choice(self.PASSCODE_ALPHABET) for _ in range(self.PASSCODE_LENGTH)
+        )
+
+    @staticmethod
+    def _pack_ref(targets: list) -> str:
+        return json.dumps(targets, separators=(",", ":"))
+
+    @staticmethod
+    def _unpack_ref(grant_ref: str) -> list:
+        return json.loads(grant_ref)
 
     # ── Per-lock primitives ───────────────────────────────────────────────
 
-    def _do_create_code(self, lock_id: str, pin: str, starts_at: datetime, ends_at: datetime) -> CodeResult:
-        response = requests.post(f"{self.BASE_URL}/password", params=self._params({
-            "ID":        lock_id,
-            "password":  pin,
-            "type":      2,
-            "startDate": self._to_ms(starts_at),
-            "endDate":   self._to_ms(ends_at)
-        }))
-        self._handle_response(response)
-        body = response.json()
+    def _add_passcode(
+        self, lock_id, pin: str, starts_at: datetime, ends_at: datetime
+    ) -> str:
+        body = self._request(
+            "POST",
+            "/password",
+            {
+                "ID": lock_id,
+                "password": pin,
+                "type": 2,  # gateway
+                "startDate": self._to_ms(starts_at),
+                "endDate": self._to_ms(ends_at),
+            },
+        )
+        return str(body["keyboardPwdId"])
 
-        if "keyboardPwd" not in body:
-            raise LockOperationError("API did not return a random PIN code")
-
-        return CodeResult(
-            code_id   = str(body["keyboardPwdId"]),
-            pin       = body["keyboardPwd"],
-            lock_id   = lock_id,
-            starts_at = starts_at,
-            ends_at   = ends_at
+    def _change_passcode(
+        self, lock_id, pass_id: str, starts_at: datetime, ends_at: datetime
+    ) -> None:
+        # ``password`` omitted on purpose: changing only the window keeps the
+        # existing PIN, so the same number stays valid on every lock. ``type=1``
+        # matches the field-tested code.
+        self._request(
+            "PUT",
+            "/password",
+            {
+                "ID": lock_id,
+                "passID": pass_id,
+                "type": 1,
+                "startDate": self._to_ms(starts_at),
+                "endDate": self._to_ms(ends_at),
+            },
         )
 
-    # ── _do_invalidate_code ──────────────────────────────────────────────────
-
-    def _do_invalidate_code(self, lock_id: str, code_id: str) -> bool:
+    def _delete_passcode(self, lock_id, pass_id: str) -> None:
         try:
             self._request(
                 "DELETE",
