@@ -26,11 +26,11 @@ jobs:
           pip install -e "./roomdoo-locks-omnitec[dev]"
           pip install -e "./roomdoo-locks-salto[dev]"
 
-      - name: Run tests
-        run: pytest
-
       - name: Debug
         run: |
           pip show roomdoo-locks-salto
           find ./roomdoo-locks-salto -type f -name "*.py" | head -20
           python -c "import roomdoo_locks_salto; print('OK')"
+
+      - name: Run tests
+        run: pytest
