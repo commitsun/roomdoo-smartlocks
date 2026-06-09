@@ -1,9 +1,10 @@
 import requests
 import secrets
+import json
 from datetime import datetime
 import base64
 
-from roomdoo_locks_base import BaseLockProvider, CodeResult
+from roomdoo_locks_base import BaseLockProvider, CodeResult, AccessGrant
 from roomdoo_locks_base.exceptions import (
     LockAuthError,
     LockConnectionError,
@@ -121,6 +122,14 @@ class SaltoProvider(BaseLockProvider):
 
     def _params(self, extra: dict) -> dict:
         return {"clientId": self.clientId, "token": self.accessToken, **extra}
+    
+    @staticmethod
+    def _pack_ref(targets: list) -> str:
+        return json.dumps(targets, separators=(",", ":"))
+
+    @staticmethod
+    def _unpack_ref(grant_ref: str) -> list:
+        return json.loads(grant_ref)
 
     # ── test_connection ──────────────────────────────────────────────────────
 
@@ -130,9 +139,9 @@ class SaltoProvider(BaseLockProvider):
 
     # ── create_code ──────────────────────
 
-    def create_code(self, lock_id: str, start_date: datetime, end_date: datetime, first_name: str, last_name: str, role_id: str, email: str = "[EMAIL_ADDRESS]", access_group_name: str = "Grupo de Acceso") -> CodeResult:
+    def create_code(self, lock_ids: list, start_date: datetime, end_date: datetime, first_name: str, last_name: str, role_id: str, email: str = "[EMAIL_ADDRESS]", access_group_name: str = "Grupo de Acceso") -> CodeResult:
         self._validate_time_range(start_date, end_date)
-        return self._do_create_code(lock_id, start_date, end_date, first_name, last_name, role_id, email, access_group_name)
+        return self._do_create_code(lock_ids, start_date, end_date, first_name, last_name, role_id, email, access_group_name)
 
     # ── delete_user ──────────────────────
 
@@ -142,13 +151,26 @@ class SaltoProvider(BaseLockProvider):
 
     # ── _do_create_code ──────────────────────
 
-    def _do_create_code(self, lock_id: str, start_date: datetime, end_date: datetime, first_name: str, last_name: str, role_id: str, email: str, access_group_name: str):
+    def _do_create_code(self, lock_ids: list, start_date: datetime, end_date: datetime, first_name: str, last_name: str, role_id: str, email: str, access_group_name: str):
         user = self._add_user_to_site(first_name, last_name, role_id, email)
         access_group_id = self._add_access_group_to_site(access_group_name)
         self._add_time_schedule_to_access_group(access_group_id, start_date, end_date)
         self._add_user_to_access_group(access_group_id, user["user_id"])
-        self._add_lock_to_access_group(access_group_id, lock_id)
-        return self._create_modify_user_pin(access_group_id, user["site_user_id"], lock_id, start_date, end_date)
+
+        created = []
+
+        for lock_id in lock_ids:
+            self._add_lock_to_access_group(access_group_id, lock_id)
+            created.append({"ID": lock_id, "passID": access_group_id})
+            
+        codeResult = self._create_modify_user_pin(access_group_id, user["site_user_id"], lock_ids[0], start_date, end_date)
+
+        return AccessGrant (
+            pin = codeResult["pin"],
+            ref = self._pack_ref(created),
+            starts_at = start_date,
+            ends_at = end_date,
+        )
 
     # ── _do_invalidate_code ──────────────────────────────────────────────────
 
