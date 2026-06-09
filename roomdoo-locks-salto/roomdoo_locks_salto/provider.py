@@ -137,24 +137,24 @@ class SaltoProvider(BaseLockProvider):
         self._authenticate()
         return True
 
-    # ── create_code ──────────────────────
-
-    def create_code(self, lock_ids: list, start_date: datetime, end_date: datetime, first_name: str, last_name: str, role_id: str, email: str = "[EMAIL_ADDRESS]", access_group_name: str = "Grupo de Acceso") -> CodeResult:
-        self._validate_time_range(start_date, end_date)
-        return self._do_create_code(lock_ids, start_date, end_date, first_name, last_name, role_id, email, access_group_name)
-
     # ── delete_user ──────────────────────
 
     def delete_user(self, site_user_id: str) -> bool:
         self._delete_user_from_site(site_user_id)
         return True
+    
+    # ── grant_access ──────────────────────────────────────────────────
 
-    # ── _do_create_code ──────────────────────
+    def grant_access(self, lock_ids: list, start_date: datetime, end_date: datetime, first_name: str, last_name: str, role_id: str, email: str = "[EMAIL_ADDRESS]", access_group_name: str = "Grupo de Acceso") -> CodeResult:
+        self._validate_time_range(start_date, end_date)
+        return self._do_grant_access(lock_ids, start_date, end_date, first_name, last_name, role_id, email, access_group_name)
+    
+    # ── _do_grant_access ──────────────────────────────────────────────────
 
-    def _do_create_code(self, lock_ids: list, start_date: datetime, end_date: datetime, first_name: str, last_name: str, role_id: str, email: str, access_group_name: str):
+    def _do_grant_access(self, lock_ids: list, starts_at: datetime, ends_at: datetime, first_name: str, last_name: str, role_id: str, email: str, access_group_name: str):
         user = self._add_user_to_site(first_name, last_name, role_id, email)
         access_group_id = self._add_access_group_to_site(access_group_name)
-        self._add_time_schedule_to_access_group(access_group_id, start_date, end_date)
+        self._add_time_schedule_to_access_group(access_group_id, starts_at, ends_at)
         self._add_user_to_access_group(access_group_id, user["user_id"])
 
         created = []
@@ -163,41 +163,40 @@ class SaltoProvider(BaseLockProvider):
             self._add_lock_to_access_group(access_group_id, lock_id)
             created.append({"ID": lock_id, "passID": access_group_id})
             
-        codeResult = self._create_modify_user_pin(access_group_id, user["site_user_id"], lock_ids[0], start_date, end_date)
+        codeResult = self._create_modify_user_pin(access_group_id, user["site_user_id"], lock_ids[0], starts_at, ends_at)
 
         return AccessGrant (
             pin = codeResult.pin,
             ref = self._pack_ref(created),
-            starts_at = start_date,
-            ends_at = end_date,
+            starts_at = starts_at,
+            ends_at = ends_at,
         )
-    
-    # ── _do_grant_access ──────────────────────────────────────────────────
-
-    def _do_grant_access(self, *args, **kwargs):
-        raise NotImplementedError("Use create_code instead")
     
     # ── _do_modify_access ──────────────────────────────────────────────────
 
-    def _do_modify_access(self, *args, **kwargs):
-        raise NotImplementedError("Use _do_modify_code instead")
+    def _do_modify_access(self, access_group_id: str, site_id: str, time_schedule_id: str, starts_at: datetime, ends_at: datetime) -> dict:
+        self._modify_time_schedule_in_access_group(access_group_id, time_schedule_id, starts_at, ends_at)
+
+        lock_ids = self._get_locks_from_access_group(access_group_id, site_id)
+
+        created = []
+
+        for lock_id in lock_ids:
+            created.append({"ID": lock_id, "passID": access_group_id})
+    
+        return AccessGrant (
+            pin = "",
+            ref = self._pack_ref(created),
+            starts_at = starts_at,
+            ends_at = ends_at,
+        )
     
     # ── _do_revoke_access ──────────────────────────────────────────────────
 
-    def _do_revoke_access(self, *args, **kwargs):
-        raise NotImplementedError("Use _do_invalidate_code instead")
-
-    # ── _do_invalidate_code ──────────────────────────────────────────────────
-
-    def _do_invalidate_code(self, access_group_id: str, site_user_id: str) -> bool:
+    def _do_revoke_access(self, access_group_id: str, site_user_id: str) -> bool:
         self._delete_access_group_from_site(access_group_id)
         self._unsubscribe_user_from_site(site_user_id)
         return True
-
-    # ── _do_modify_code ──────────────────────────────────────────────────────
-
-    def _do_modify_code(self, access_group_id: str, time_schedule_id: str, start_date: datetime, end_date: datetime) -> dict:
-        return self._modify_time_schedule_in_access_group(access_group_id, time_schedule_id, start_date, end_date)
 
     # ── get_access_groups_from_site ──────────────────────────────────────────────────────
 
@@ -562,5 +561,27 @@ class SaltoProvider(BaseLockProvider):
                 starts_at = start_date,
                 ends_at   = end_date
             )
+        except requests.exceptions.ConnectionError:
+            raise LockConnectionError("Unable to connect to Salto API")
+        
+    # ── _get_locks_from_access_group ──────────────────────────────────────────────────────
+
+    def _get_locks_from_access_group(self, access_group_id: str, site_id: str) -> list:
+        try:
+            response = requests.put(f"{self.API_HOSTS[self.env]}/v1.2/sites/{self.siteId}/access_groups/{access_group_id}/locks", 
+            headers={
+                "Authorization" : "Bearer " + self.accessToken
+            },
+            json={
+            })
+            self._handle_response(response)
+            body = response.json()
+
+            locks_ids = []
+
+            for lock in body["items"]:
+                locks_ids.append(lock["id"])
+
+            return locks_ids
         except requests.exceptions.ConnectionError:
             raise LockConnectionError("Unable to connect to Salto API")

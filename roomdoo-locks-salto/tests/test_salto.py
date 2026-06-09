@@ -37,7 +37,6 @@ API_BASE_PROD     = "https://user.my-clay.com"
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
 def mock_auth(env="acc"):
-    """Mock de autenticación reutilizable."""
     url = IDENTITY_URL_ACC if env == "acc" else IDENTITY_URL_PROD
     responses.post(
         url,
@@ -50,7 +49,6 @@ def mock_auth(env="acc"):
     )
 
 def make_provider(env="acc"):
-    """Instancia el provider (requiere mock_auth activo)."""
     return SaltoProvider(CLIENT_ID, CLIENT_SECRET, USERNAME, PASSWORD, SITE_ID, env=env)
 
 @pytest.fixture
@@ -121,6 +119,26 @@ def mock_create_pin():
         body="123456"
     )
 
+def mock_modify_time_schedule(start_date, end_date):
+    responses.patch(
+        f"{API_BASE_ACC}/v1.1/sites/{SITE_ID}/access_groups/{ACCESS_GROUP_ID}/time_schedules/{TIME_SCHEDULE_ID}",
+        json={
+            "id": TIME_SCHEDULE_ID,
+            "start_date": start_date.strftime("%Y-%m-%dT%H:%M:%S"),
+            "end_date": end_date.strftime("%Y-%m-%dT%H:%M:%S"),
+            "monday": True, "tuesday": True, "wednesday": True,
+            "thursday": True, "friday": True, "saturday": True, "sunday": True,
+            "start_time": "00:00:00",
+            "end_time": "23:59:59"
+        }
+    )
+
+def mock_get_locks_from_access_group(lock_ids):
+    responses.put(
+        f"{API_BASE_ACC}/v1.2/sites/{SITE_ID}/access_groups/{ACCESS_GROUP_ID}/locks",
+        json={"items": [{"id": lock_id} for lock_id in lock_ids]}
+    )
+
 # ── Tests de autenticación ────────────────────────────────────────────────────
 
 @responses.activate
@@ -140,22 +158,14 @@ def test_authentication_prod_env():
 
 @responses.activate
 def test_authentication_invalid_credentials():
-    responses.post(
-        IDENTITY_URL_ACC,
-        json={"error": "invalid_client"},
-        status=401
-    )
+    responses.post(IDENTITY_URL_ACC, json={"error": "invalid_client"}, status=401)
     with pytest.raises(LockAuthError):
         make_provider()
 
 
 @responses.activate
 def test_authentication_missing_token():
-    responses.post(
-        IDENTITY_URL_ACC,
-        json={"error": "invalid_grant"},
-        status=400
-    )
+    responses.post(IDENTITY_URL_ACC, json={"error": "invalid_grant"}, status=400)
     with pytest.raises(LockAuthError):
         make_provider()
 
@@ -166,7 +176,7 @@ def test_authentication_missing_token():
 def test_connection_success():
     mock_auth()
     provider = make_provider()
-    mock_auth()  # test_connection vuelve a autenticar
+    mock_auth()
     assert provider.test_connection() is True
 
 
@@ -201,10 +211,7 @@ def test_add_user_to_site_not_found():
 def test_delete_user_success():
     mock_auth()
     provider = make_provider()
-    responses.delete(
-        f"{API_BASE_ACC}/v1.2/sites/{SITE_ID}/users/{SITE_USER_ID}",
-        status=204
-    )
+    responses.delete(f"{API_BASE_ACC}/v1.2/sites/{SITE_ID}/users/{SITE_USER_ID}", status=204)
     assert provider.delete_user(SITE_USER_ID) is True
 
 
@@ -228,18 +235,14 @@ def test_add_access_group_success():
     mock_auth()
     provider = make_provider()
     mock_add_access_group()
-    access_group_id = provider._add_access_group_to_site("Grupo de Acceso")
-    assert access_group_id == ACCESS_GROUP_ID
+    assert provider._add_access_group_to_site("Grupo de Acceso") == ACCESS_GROUP_ID
 
 
 @responses.activate
 def test_delete_access_group_success():
     mock_auth()
     provider = make_provider()
-    responses.delete(
-        f"{API_BASE_ACC}/v1.2/sites/{SITE_ID}/access_groups/{ACCESS_GROUP_ID}",
-        status=204
-    )
+    responses.delete(f"{API_BASE_ACC}/v1.2/sites/{SITE_ID}/access_groups/{ACCESS_GROUP_ID}", status=204)
     assert provider._delete_access_group_from_site(ACCESS_GROUP_ID) is True
 
 
@@ -263,18 +266,7 @@ def test_modify_time_schedule_success(time_range):
     provider = make_provider()
     starts_at, ends_at = time_range
     new_ends_at = ends_at + timedelta(hours=12)
-    responses.patch(
-        f"{API_BASE_ACC}/v1.1/sites/{SITE_ID}/access_groups/{ACCESS_GROUP_ID}/time_schedules/{TIME_SCHEDULE_ID}",
-        json={
-            "id": TIME_SCHEDULE_ID,
-            "start_date": starts_at.strftime("%Y-%m-%dT%H:%M:%S"),
-            "end_date": new_ends_at.strftime("%Y-%m-%dT%H:%M:%S"),
-            "monday": True, "tuesday": True, "wednesday": True,
-            "thursday": True, "friday": True, "saturday": True, "sunday": True,
-            "start_time": "00:00:00",
-            "end_time": "23:59:59"
-        }
-    )
+    mock_modify_time_schedule(starts_at, new_ends_at)
     result = provider._modify_time_schedule_in_access_group(ACCESS_GROUP_ID, TIME_SCHEDULE_ID, starts_at, new_ends_at)
     assert result["time_schedule_id"] == TIME_SCHEDULE_ID
 
@@ -296,10 +288,7 @@ def test_delete_time_schedule_success():
 def test_unsubscribe_user_success():
     mock_auth()
     provider = make_provider()
-    responses.patch(
-        f"{API_BASE_ACC}/v1.2/sites/{SITE_ID}/users/{SITE_USER_ID}/subscription",
-        status=204
-    )
+    responses.patch(f"{API_BASE_ACC}/v1.2/sites/{SITE_ID}/users/{SITE_USER_ID}/subscription", status=204)
     assert provider._unsubscribe_user_from_site(SITE_USER_ID) is True
 
 
@@ -307,10 +296,7 @@ def test_unsubscribe_user_success():
 def test_subscribe_user_success():
     mock_auth()
     provider = make_provider()
-    responses.patch(
-        f"{API_BASE_ACC}/v1.2/sites/{SITE_ID}/users/{SITE_USER_ID}/subscription",
-        status=204
-    )
+    responses.patch(f"{API_BASE_ACC}/v1.2/sites/{SITE_ID}/users/{SITE_USER_ID}/subscription", status=204)
     assert provider._subscribe_user_to_site(SITE_USER_ID) is True
 
 
@@ -360,8 +346,7 @@ def test_unpack_ref():
         {"ID": LOCK_ID_2, "passID": ACCESS_GROUP_ID},
     ]
     packed = json.dumps(targets, separators=(",", ":"))
-    unpacked = SaltoProvider._unpack_ref(packed)
-    assert unpacked == targets
+    assert SaltoProvider._unpack_ref(packed) == targets
 
 
 def test_pack_unpack_roundtrip():
@@ -369,10 +354,10 @@ def test_pack_unpack_roundtrip():
     assert SaltoProvider._unpack_ref(SaltoProvider._pack_ref(targets)) == targets
 
 
-# ── Tests de create_code / _do_create_code (flujo completo) ──────────────────
+# ── Tests de grant_access / _do_grant_access (flujo completo) ────────────────
 
 @responses.activate
-def test_create_code_single_lock(time_range):
+def test_grant_access_single_lock(time_range):
     mock_auth()
     provider = make_provider()
     starts_at, ends_at = time_range
@@ -384,7 +369,7 @@ def test_create_code_single_lock(time_range):
     mock_add_lock_to_access_group(LOCK_ID)
     mock_create_pin()
 
-    result = provider._do_create_code([LOCK_ID], starts_at, ends_at, "Prueba", "API", ROLE_ID, "prueba@gmail.com", "Grupo de Acceso")
+    result = provider._do_grant_access([LOCK_ID], starts_at, ends_at, "Prueba", "API", ROLE_ID, "prueba@gmail.com", "Grupo de Acceso")
     assert result.pin == "123456"
 
     unpacked = SaltoProvider._unpack_ref(result.ref)
@@ -394,7 +379,7 @@ def test_create_code_single_lock(time_range):
 
 
 @responses.activate
-def test_create_code_multiple_locks(time_range):
+def test_grant_access_multiple_locks(time_range):
     mock_auth()
     provider = make_provider()
     starts_at, ends_at = time_range
@@ -403,11 +388,11 @@ def test_create_code_multiple_locks(time_range):
     mock_add_access_group()
     mock_add_time_schedule(starts_at, ends_at)
     mock_add_user_to_access_group()
-    mock_add_lock_to_access_group(LOCK_ID)    # primer lock
-    mock_add_lock_to_access_group(LOCK_ID_2)  # segundo lock
+    mock_add_lock_to_access_group(LOCK_ID)
+    mock_add_lock_to_access_group(LOCK_ID_2)
     mock_create_pin()
 
-    result = provider._do_create_code(LOCK_IDS, starts_at, ends_at, "Prueba", "API", ROLE_ID, "prueba@gmail.com", "Grupo de Acceso")
+    result = provider._do_grant_access(LOCK_IDS, starts_at, ends_at, "Prueba", "API", ROLE_ID, "prueba@gmail.com", "Grupo de Acceso")
     assert result.pin == "123456"
 
     unpacked = SaltoProvider._unpack_ref(result.ref)
@@ -417,7 +402,7 @@ def test_create_code_multiple_locks(time_range):
 
 
 @responses.activate
-def test_create_code_via_public_method(time_range):
+def test_grant_access_via_public_method(time_range):
     mock_auth()
     provider = make_provider()
     starts_at, ends_at = time_range
@@ -429,53 +414,41 @@ def test_create_code_via_public_method(time_range):
     mock_add_lock_to_access_group(LOCK_ID)
     mock_create_pin()
 
-    result = provider.create_code([LOCK_ID], starts_at, ends_at, "Prueba", "API", ROLE_ID)
+    result = provider.grant_access([LOCK_ID], starts_at, ends_at, "Prueba", "API", ROLE_ID)
     assert result.pin == "123456"
     assert result.starts_at == starts_at
     assert result.ends_at == ends_at
 
 
-# ── Tests de invalidate_code ──────────────────────────────────────────────────
+# ── Tests de _do_revoke_access ────────────────────────────────────────────────
 
 @responses.activate
-def test_invalidate_code_success():
+def test_revoke_access_success():
     mock_auth()
     provider = make_provider()
-    responses.delete(
-        f"{API_BASE_ACC}/v1.2/sites/{SITE_ID}/access_groups/{ACCESS_GROUP_ID}",
-        status=204
-    )
-    responses.patch(
-        f"{API_BASE_ACC}/v1.2/sites/{SITE_ID}/users/{SITE_USER_ID}/subscription",
-        status=204
-    )
-    assert provider._do_invalidate_code(ACCESS_GROUP_ID, SITE_USER_ID) is True
+    responses.delete(f"{API_BASE_ACC}/v1.2/sites/{SITE_ID}/access_groups/{ACCESS_GROUP_ID}", status=204)
+    responses.patch(f"{API_BASE_ACC}/v1.2/sites/{SITE_ID}/users/{SITE_USER_ID}/subscription", status=204)
+    assert provider._do_revoke_access(ACCESS_GROUP_ID, SITE_USER_ID) is True
 
 
-# ── Tests de _do_modify_code ──────────────────────────────────────────────────
+# ── Tests de _do_modify_access ────────────────────────────────────────────────
 
 @responses.activate
-def test_modify_code_success(time_range):
+def test_modify_access_success(time_range):
     mock_auth()
     provider = make_provider()
     starts_at, ends_at = time_range
     new_ends_at = ends_at + timedelta(hours=12)
-    responses.patch(
-        f"{API_BASE_ACC}/v1.1/sites/{SITE_ID}/access_groups/{ACCESS_GROUP_ID}/time_schedules/{TIME_SCHEDULE_ID}",
-        json={
-            "id": TIME_SCHEDULE_ID,
-            "start_date": starts_at.strftime("%Y-%m-%dT%H:%M:%S"),
-            "end_date": new_ends_at.strftime("%Y-%m-%dT%H:%M:%S"),
-            "monday": True, "tuesday": True, "wednesday": True,
-            "thursday": True, "friday": True, "saturday": True, "sunday": True,
-            "start_time": "00:00:00",
-            "end_time": "23:59:59"
-        }
-    )
-    result = provider._do_modify_code(ACCESS_GROUP_ID, TIME_SCHEDULE_ID, starts_at, new_ends_at)
-    assert result["time_schedule_id"] == TIME_SCHEDULE_ID
-    assert "start_date" in result
-    assert "end_date" in result
+
+    mock_modify_time_schedule(starts_at, new_ends_at)
+    mock_get_locks_from_access_group([LOCK_ID])
+
+    result = provider._do_modify_access(ACCESS_GROUP_ID, SITE_ID, TIME_SCHEDULE_ID, starts_at, new_ends_at)
+    unpacked = SaltoProvider._unpack_ref(result.ref)
+    assert unpacked[0]["ID"] == LOCK_ID
+    assert unpacked[0]["passID"] == ACCESS_GROUP_ID
+    assert result.starts_at == starts_at
+    assert result.ends_at == new_ends_at
 
 
 # ── Tests de validación de fechas ─────────────────────────────────────────────
@@ -486,7 +459,7 @@ def test_invalid_time_range(time_range):
     provider = make_provider()
     starts_at, ends_at = time_range
     with pytest.raises(ValueError):
-        provider.create_code([LOCK_ID], ends_at, starts_at, "Prueba", "API", ROLE_ID)
+        provider.grant_access([LOCK_ID], ends_at, starts_at, "Prueba", "API", ROLE_ID)
 
 
 @responses.activate
@@ -495,7 +468,7 @@ def test_naive_datetime(time_range):
     provider = make_provider()
     starts_at, ends_at = time_range
     with pytest.raises(ValueError):
-        provider.create_code([LOCK_ID], datetime.now(), ends_at, "Prueba", "API", ROLE_ID)
+        provider.grant_access([LOCK_ID], datetime.now(), ends_at, "Prueba", "API", ROLE_ID)
 
 
 # ── Tests de errores de conexión ──────────────────────────────────────────────
