@@ -166,11 +166,26 @@ class SaltoProvider(BaseLockProvider):
         codeResult = self._create_modify_user_pin(access_group_id, user["site_user_id"], lock_ids[0], start_date, end_date)
 
         return AccessGrant (
-            pin = codeResult["pin"],
+            pin = codeResult.pin,
             ref = self._pack_ref(created),
             starts_at = start_date,
             ends_at = end_date,
         )
+    
+    # ── _do_grant_access ──────────────────────────────────────────────────
+
+    def _do_grant_access(self, *args, **kwargs):
+        raise NotImplementedError("Use create_code instead")
+    
+    # ── _do_modify_access ──────────────────────────────────────────────────
+
+    def _do_modify_access(self, *args, **kwargs):
+        raise NotImplementedError("Use _do_modify_code instead")
+    
+    # ── _do_revoke_access ──────────────────────────────────────────────────
+
+    def _do_revoke_access(self, *args, **kwargs):
+        raise NotImplementedError("Use _do_invalidate_code instead")
 
     # ── _do_invalidate_code ──────────────────────────────────────────────────
 
