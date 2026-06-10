@@ -2,6 +2,9 @@
 
 Salto provider for Roomdoo smart lock integrations.
 
+Implements the `BaseLockProvider` contract (`grant_access` / `modify_access` /
+`revoke_access` / `test_connection`) on top of the SaltoKS Connect API.
+
 ## Installation
 
 From the root of the monorepo:
@@ -19,63 +22,54 @@ From the root of the monorepo:
         clientSecret = "YOUR_CLIENT_SECRET",
         username     = "YOUR_USERNAME",
         password     = "YOUR_PASSWORD",
-        siteId       = "YOUR_SITE_ID"
+        siteId       = "YOUR_SITE_ID",
+        role_id      = "YOUR_ROLE_ID",
+        env          = "prod",            # or "acc"
     )
 
     starts_at = datetime.now(timezone.utc)
-    ends_at   = starts_at + timedelta(hours=1)
+    ends_at   = starts_at + timedelta(days=2)
 
-    # Create a PIN code for a lock
-    result = provider.create_code(
-        lock_id          = "lock-123",
-        start_date       = starts_at,
-        end_date         = ends_at,
-        first_name       = "John",
-        last_name        = "Doe",
-        role_id          = "YOUR_ROLE_ID",
-        email            = "guest@roomdoo.com",   # optional
-        access_group_name = "Grupo de Acceso"     # optional
-    )
-    print(result.pin)        # e.g. "123456"
-    print(result.code_id)    # access_group_id
-    print(result.lock_id)    # lock-123
-    print(result.starts_at)
-    print(result.ends_at)
+    # Grant one guest access to a set of locks for a validity window.
+    grant = provider.grant_access(["lock-123", "lock-456"], starts_at, ends_at)
+    print(grant.pin)         # PIN the guest uses on every lock, e.g. "123456"
+    print(grant.ref)         # opaque handle: store it verbatim
+    print(grant.starts_at, grant.ends_at)
 
-    # Invalidate a code (deletes access group and suspends user)
-    provider._do_invalidate_code(result.code_id, site_user_id)
+    # Extend / shorten the window (same PIN, same ref).
+    grant = provider.modify_access(grant.ref, starts_at, ends_at + timedelta(days=1))
 
-    # Modify a code (update time schedule dates)
-    modified = provider._do_modify_code(access_group_id, time_schedule_id, new_starts_at, new_ends_at)
+    # Revoke (idempotent): deletes the access group and the guest user.
+    provider.revoke_access(grant.ref)
 
-## Parameters
+## Constructor parameters
 
-| Parameter   | Type | Required | Description                          |
-|-------------|------|----------|--------------------------------------|
-| clientId    | str  | Yes      | Salto KS API client ID               |
-| clientSecret| str  | Yes      | Salto KS API client secret           |
-| username    | str  | Yes      | Salto KS account username            |
-| password    | str  | Yes      | Salto KS account password            |
-| siteId      | str  | Yes      | ID of the Salto KS site to operate on|
-
-## create_code parameters
-
-| Parameter         | Type | Required | Default           | Description                                      |
-|-------------------|------|----------|-------------------|--------------------------------------------------|
-| lock_id           | str  | Yes      |                   | ID of the lock to grant access to                |
-| start_date        | datetime | Yes  |                   | Start of the access window (timezone-aware)      |
-| end_date          | datetime | Yes  |                   | End of the access window (timezone-aware)        |
-| first_name        | str  | Yes      |                   | Guest first name                                 |
-| last_name         | str  | Yes      |                   | Guest last name                                  |
-| role_id           | str  | Yes      |                   | Salto KS role ID assigned to the guest user      |
-| email             | str  | No       | [EMAIL_ADDRESS]   | Guest email                                      |
-| access_group_name | str  | No       | Grupo de Acceso   | Name for the access group created                |
+| Parameter         | Type | Required | Default          | Description                                      |
+|-------------------|------|----------|------------------|--------------------------------------------------|
+| clientId          | str  | Yes      |                  | Salto KS API client ID                           |
+| clientSecret      | str  | Yes      |                  | Salto KS API client secret                       |
+| username          | str  | Yes      |                  | Salto KS account username                        |
+| password          | str  | Yes      |                  | Salto KS account password                        |
+| siteId            | str  | Yes      |                  | ID of the Salto KS site to operate on            |
+| role_id           | str  | Yes      |                  | Salto KS role assigned to each guest user        |
+| env               | str  | No       | prod             | `prod` or `acc` (acceptance) environment         |
+| access_group_name | str  | No       | Roomdoo Access   | `customer_reference` label of the access group   |
+| guest_first_name  | str  | No       | Roomdoo          | First name of the synthetic guest user           |
+| guest_last_name   | str  | No       | Guest            | Last name of the synthetic guest user            |
+| guest_email       | str  | No       | (empty)          | Email of the synthetic guest user                |
 
 ## Notes
 
 - Authentication uses OAuth 2.0 password grant via the Salto KS Identity Provider.
-- Each `create_code` call creates a new site user, access group, time schedule, and PIN.
-- The PIN is generated by Salto KS and returned as a plain string.
-- Dates must be timezone-aware `datetime` objects (UTC recommended).
-- The acceptance environment (`acc`) is used by default.
-- To get available `role_id` values for your site, use `provider._get_roles_from_site()`.
+- Each `grant_access` creates a site user, an access group, a time schedule, links
+  the locks and issues a PIN. If any step fails the partial state is rolled back.
+- The `ref` returned by `grant_access` is **opaque**: it carries the access group,
+  time schedule and user ids needed by `modify_access` / `revoke_access`. Store it
+  verbatim and never parse it.
+- Access is modelled as the Salto **check-in / check-out** (continuous) window: the
+  exact start/end times travel in `start_date` / `end_date` while the daily
+  `start_time`/`end_time` stay `00:00:00`–`23:59:59` with every weekday enabled, so
+  multi-day stays are continuous (no overnight gap).
+- The PIN is generated by Salto KS unless a specific one is passed to `grant_access`.
+- Dates must be timezone-aware UTC `datetime` objects.
+- To list the available `role_id` values for your site use `provider._get_roles_from_site()`.
