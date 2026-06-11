@@ -32,7 +32,7 @@ class TTLockProvider(BaseLockProvider):
     # The lock the team tested has a 1-7 keypad only; kept configurable so a
     # different keypad (e.g. 1-9) can be served without touching the logic.
     PASSCODE_ALPHABET = "1234567"
-    PASSCODE_LENGTH = 6
+    PASSCODE_LENGTH = 4
 
     def __init__(self, clientId: str, clientSecret: str, username: str, password: str):
         self.clientId = clientId

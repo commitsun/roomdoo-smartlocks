@@ -40,7 +40,7 @@ class OmnitecProvider(BaseLockProvider):
 
     # Omnitec keypads are 1-9 (no 0); kept configurable per keypad model.
     PASSCODE_ALPHABET = "123456789"
-    PASSCODE_LENGTH = 6
+    PASSCODE_LENGTH = 4
 
     def __init__(self, clientId: str, clientSecret: str, username: str, password: str):
         self.clientId = clientId
