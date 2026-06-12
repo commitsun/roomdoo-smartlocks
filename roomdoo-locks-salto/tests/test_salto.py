@@ -9,6 +9,7 @@ from roomdoo_locks_base.exceptions import (
     LockAuthError,
     LockConnectionError,
     LockNotFoundError,
+    LockOperationError,
 )
 
 # ── Test constants ────────────────────────────────────────────────────────────
@@ -127,6 +128,13 @@ def mock_delete_access_group(status=204):
 def mock_delete_user(status=204):
     responses.delete(
         f"{API_BASE_ACC}/v1.2/sites/{SITE_ID}/users/{SITE_USER_ID}",
+        status=status,
+    )
+
+
+def mock_unsubscribe_user(status=204):
+    responses.patch(
+        f"{API_BASE_ACC}/v1.2/sites/{SITE_ID}/users/{SITE_USER_ID}/subscription",
         status=status,
     )
 
@@ -322,6 +330,28 @@ def test_grant_access_rejects_empty_locks(time_range):
 
 
 @responses.activate
+def test_grant_access_rejects_custom_pin(time_range):
+    mock_auth()
+    provider = make_provider()
+    starts_at, ends_at = time_range
+    # Salto generates the PIN; a caller-supplied one must fail loud (premium
+    # feature this adapter does not support).
+    with pytest.raises(LockOperationError):
+        provider.grant_access([LOCK_ID], starts_at, ends_at, pin="1234")
+
+
+@responses.activate
+def test_grant_access_requires_role_id(time_range):
+    mock_auth()
+    provider = SaltoProvider(
+        CLIENT_ID, CLIENT_SECRET, USERNAME, PASSWORD, SITE_ID, None, env="acc"
+    )
+    starts_at, ends_at = time_range
+    with pytest.raises(LockOperationError):
+        provider.grant_access([LOCK_ID], starts_at, ends_at)
+
+
+@responses.activate
 def test_grant_access_pin_with_leading_zero(time_range):
     mock_auth()
     provider = make_provider()
@@ -386,6 +416,9 @@ def test_modify_access_success(time_range):
     assert result.ref == build_ref([LOCK_ID])
     assert result.starts_at == starts_at
     assert result.ends_at == new_ends_at
+    # Salto cannot read PINs back; a window change keeps the original PIN and
+    # reports it as unchanged so the caller does not overwrite its stored value.
+    assert result.pin is None
 
 
 @responses.activate
@@ -401,22 +434,57 @@ def test_modify_access_rejects_bad_window(time_range):
 
 
 @responses.activate
-def test_revoke_access_success():
+def test_revoke_access_suspends_user_without_deleting():
     mock_auth()
     provider = make_provider()
-    mock_delete_access_group()
-    mock_delete_user()
+    mock_unsubscribe_user()
     assert provider.revoke_access(build_ref()) is True
+    # Revoke must free the license by suspending, never delete: the user, access
+    # group and audit logs stay until the retention cron calls delete_grant.
+    patch_call = next(
+        c for c in responses.calls if c.request.method == "PATCH"
+    )
+    assert patch_call.request.url.endswith(f"/users/{SITE_USER_ID}/subscription")
+    assert json.loads(patch_call.request.body)["state"] == "suspended"
+    assert not any(c.request.method == "DELETE" for c in responses.calls)
 
 
 @responses.activate
 def test_revoke_access_is_idempotent_when_already_gone():
     mock_auth()
     provider = make_provider()
+    mock_unsubscribe_user(status=404)
+    # A user that is already suspended or gone still revokes without raising.
+    assert provider.revoke_access(build_ref()) is True
+
+
+# ── delete_grant (Salto-specific hard delete) ─────────────────────────────────
+
+
+@responses.activate
+def test_delete_grant_deletes_group_and_user():
+    mock_auth()
+    provider = make_provider()
+    mock_delete_access_group()
+    mock_delete_user()
+    assert provider.delete_grant(build_ref()) is True
+    deleted = {
+        c.request.url for c in responses.calls if c.request.method == "DELETE"
+    }
+    assert (
+        f"{API_BASE_ACC}/v1.2/sites/{SITE_ID}/access_groups/{ACCESS_GROUP_ID}"
+        in deleted
+    )
+    assert f"{API_BASE_ACC}/v1.2/sites/{SITE_ID}/users/{SITE_USER_ID}" in deleted
+
+
+@responses.activate
+def test_delete_grant_is_idempotent_when_already_gone():
+    mock_auth()
+    provider = make_provider()
     mock_delete_access_group(status=404)
     mock_delete_user(status=404)
-    # A grant whose resources are already gone still revokes without raising.
-    assert provider.revoke_access(build_ref()) is True
+    assert provider.delete_grant(build_ref()) is True
 
 
 # ── delete_user (extra) ───────────────────────────────────────────────────────
@@ -502,6 +570,20 @@ def test_create_pin_error():
     )
     with pytest.raises(LockAuthError):
         provider._create_modify_user_pin(SITE_USER_ID)
+
+
+@responses.activate
+def test_list_roles_returns_id_and_name():
+    mock_auth()
+    provider = make_provider()
+    responses.get(
+        f"{API_BASE_ACC}/v1.2/sites/{SITE_ID}/roles",
+        json={"items": [{"id": "r1", "name": "User"}, {"id": "r2", "name": "Admin"}]},
+    )
+    assert provider.list_roles() == [
+        {"id": "r1", "name": "User"},
+        {"id": "r2", "name": "Admin"},
+    ]
 
 
 @responses.activate

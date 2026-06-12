@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Optional
 
 
 @dataclass(frozen=True)
@@ -35,12 +36,19 @@ class AccessGrant:
     the vendor's concern (TTLock/Omnitec replicate a passcode per lock;
     Salto assigns the PIN to a user and grants a lock group).
 
+    A ``pin`` of ``None`` means *unchanged / not returned*: the credential
+    is unaffected by the operation and the caller must keep the PIN it
+    already stored. This is how :meth:`BaseLockProvider.modify_access`
+    reports a window change on a vendor that keeps the same PIN but cannot
+    read it back (e.g. Salto). An empty string is a real (if unusual) PIN
+    value, distinct from ``None``.
+
     ``ref`` is an **opaque, vendor-specific** handle the caller stores
     verbatim and hands back to :meth:`modify_access`/:meth:`revoke_access`
     to manage the grant's lifecycle. Callers must not parse it.
     """
 
-    pin: str
+    pin: Optional[str]
     ref: str
     starts_at: datetime
     ends_at: datetime

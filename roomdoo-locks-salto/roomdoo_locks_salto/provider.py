@@ -46,7 +46,7 @@ class SaltoProvider(BaseLockProvider):
         username: str,
         password: str,
         siteId: str,
-        role_id: str,
+        role_id: str = None,
         env: str = "prod",
         access_group_name: str = "Roomdoo Access",
         guest_first_name: str = "Roomdoo",
@@ -150,6 +150,14 @@ class SaltoProvider(BaseLockProvider):
     def _do_grant_access(
         self, lock_ids: list, starts_at: datetime, ends_at: datetime, pin: str
     ) -> AccessGrant:
+        if pin is not None:
+            # Salto KS generates the PIN; setting a custom one is a premium
+            # feature this adapter does not support. Fail loud rather than
+            # silently issue a different PIN than the caller asked for.
+            raise LockOperationError("Salto does not support setting a custom PIN")
+        if not self.role_id:
+            # The site user needs a role; without one Salto rejects creation.
+            raise LockOperationError("Salto guest role_id is not configured")
         user = self._add_user_to_site(
             self.guest_first_name, self.guest_last_name, self.role_id, self.guest_email
         )
@@ -202,19 +210,30 @@ class SaltoProvider(BaseLockProvider):
         self._modify_time_schedule_in_access_group(
             ref["access_group_id"], ref["time_schedule_id"], starts_at, ends_at
         )
-        # The PIN does not change when only the validity window is updated; the
-        # caller keeps the one returned by grant_access.
-        return AccessGrant(pin="", ref=grant_ref, starts_at=starts_at, ends_at=ends_at)
+        # Only the time schedule moves; the user and PIN are untouched. Salto
+        # never lets us read a PIN back, so we report it as unchanged
+        # (``pin=None``) per the contract and the caller keeps the one returned
+        # by grant_access. Patching in place (not delete+recreate) is what keeps
+        # that original PIN valid.
+        return AccessGrant(
+            pin=None, ref=grant_ref, starts_at=starts_at, ends_at=ends_at
+        )
 
     def _do_revoke_access(self, grant_ref: str) -> bool:
+        """Make the grant non-functional by *suspending* the guest user.
+
+        Salto licenses are billed per **subscribed** user, so revoking deletes
+        nothing: it unsubscribes the user (state ``suspended``), which frees the
+        license and stops the PIN from opening any lock while the user, access
+        group and access logs are kept for audit. The hard delete that reclaims
+        those resources happens later via :meth:`delete_grant`, called by the
+        caller's retention cron once the dispute window has passed.
+
+        Idempotent: a user that is already suspended or gone still revokes.
+        """
         ref = self._unpack_ref(grant_ref)
-        # Idempotent: a grant whose resources are already gone still revokes.
         try:
-            self._delete_access_group_from_site(ref["access_group_id"])
-        except LockNotFoundError:
-            pass
-        try:
-            self._delete_user_from_site(ref["site_user_id"])
+            self._unsubscribe_user_from_site(ref["site_user_id"])
         except LockNotFoundError:
             pass
         return True
@@ -225,9 +244,43 @@ class SaltoProvider(BaseLockProvider):
 
     # ── Extras ─────────────────────────────────────────────────────────────
 
+    def delete_grant(self, grant_ref: str) -> bool:
+        """Hard-delete the resources behind a (revoked) grant.
+
+        Deletes the access group and the guest user identified by
+        ``grant_ref``, reclaiming the user and its license for good. Meant to
+        run from the caller's retention cron some time after
+        :meth:`revoke_access` suspended the user — never as the immediate
+        reaction to a checkout, which only suspends.
+
+        Idempotent: resources already gone do not raise.
+        """
+        ref = self._unpack_ref(grant_ref)
+        try:
+            self._delete_access_group_from_site(ref["access_group_id"])
+        except LockNotFoundError:
+            pass
+        try:
+            self._delete_user_from_site(ref["site_user_id"])
+        except LockNotFoundError:
+            pass
+        return True
+
     def delete_user(self, site_user_id: str) -> bool:
         self._delete_user_from_site(site_user_id)
         return True
+
+    def list_roles(self) -> list:
+        """Return the site's roles as ``[{"id": ..., "name": ...}, ...]``.
+
+        Lets the caller pick the guest role (the basic *User* role, which only
+        opens doors). Role ids are unique per site, so they must be discovered
+        rather than hardcoded. Needs no ``role_id`` itself, so it can run before
+        one is configured."""
+        return [
+            {"id": role.get("id"), "name": role.get("name")}
+            for role in self._get_roles_from_site()
+        ]
 
     # ── get_access_groups_from_site ──────────────────────────────────────────
 
