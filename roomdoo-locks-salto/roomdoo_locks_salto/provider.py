@@ -357,25 +357,30 @@ class SaltoProvider(BaseLockProvider):
         self, first_name: str, last_name: str, role_id: str, email: str
     ) -> dict:
         try:
+            payload = {
+                "alias": first_name + " " + last_name,
+                "blocked": False,
+                "first_name": first_name,
+                "last_name": last_name,
+                "override_privacy_mode": True,
+                "role_ids": [role_id],
+                "tag_id": "",
+                "toggle_easy_office_mode": True,
+                "toggle_manual_office_mode": True,
+                "use_pin": True,
+            }
+            # Email is optional. Salto rejects an empty string ("Email '' is
+            # not valid"), so only send the key when set — the PIN flow
+            # deliberately leaves it empty so Salto never emails the guest.
+            if email:
+                payload["email"] = email
             response = requests.post(
                 f"{self.API_HOSTS[self.env]}/v1.2/sites/{self.siteId}/users",
                 headers={
                     "Content-Type": "application/json",
                     "Authorization": "Bearer " + self.accessToken,
                 },
-                json={
-                    "alias": first_name + " " + last_name,
-                    "blocked": False,
-                    "email": email,
-                    "first_name": first_name,
-                    "last_name": last_name,
-                    "override_privacy_mode": True,
-                    "role_ids": [role_id],
-                    "tag_id": "",
-                    "toggle_easy_office_mode": True,
-                    "toggle_manual_office_mode": True,
-                    "use_pin": True,
-                },
+                json=payload,
             )
             self._handle_response(response)
             body = response.json()

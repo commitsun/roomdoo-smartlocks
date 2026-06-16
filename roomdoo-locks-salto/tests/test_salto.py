@@ -521,6 +521,28 @@ def test_add_user_to_site_success():
 
 
 @responses.activate
+def test_add_user_to_site_omits_empty_email():
+    # Salto rejects an empty email ("Email '' is not valid"), so the key must
+    # not be sent when no address is provided (the PIN flow never sends one).
+    mock_auth()
+    provider = make_provider()
+    mock_add_user_to_site()
+    provider._add_user_to_site("Roomdoo", "Guest", ROLE_ID, "")
+    body = json.loads(responses.calls[-1].request.body)
+    assert "email" not in body
+
+
+@responses.activate
+def test_add_user_to_site_includes_email_when_set():
+    mock_auth()
+    provider = make_provider()
+    mock_add_user_to_site()
+    provider._add_user_to_site("Roomdoo", "Guest", ROLE_ID, "guest@example.com")
+    body = json.loads(responses.calls[-1].request.body)
+    assert body["email"] == "guest@example.com"
+
+
+@responses.activate
 def test_add_user_to_site_not_found():
     mock_auth()
     provider = make_provider()
