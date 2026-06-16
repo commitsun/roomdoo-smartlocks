@@ -574,6 +574,38 @@ def test_add_time_schedule_success(time_range):
 
 
 @responses.activate
+def test_time_schedule_localizes_to_configured_timezone():
+    # Salto enforces schedule datetimes in the site/IQ local timezone, not UTC.
+    # The caller passes UTC instants; they must be sent as the local wall-clock.
+    mock_auth()
+    provider = SaltoProvider(
+        CLIENT_ID, CLIENT_SECRET, USERNAME, PASSWORD, SITE_ID, ROLE_ID,
+        env="acc", time_zone="Europe/Madrid",
+    )
+    starts_at = datetime(2026, 6, 16, 16, 0, 0, tzinfo=timezone.utc)  # 18:00 CEST
+    ends_at = datetime(2026, 6, 17, 10, 0, 0, tzinfo=timezone.utc)    # 12:00 CEST
+    mock_add_time_schedule(starts_at, ends_at)
+    provider._add_time_schedule_to_access_group(ACCESS_GROUP_ID, starts_at, ends_at)
+    body = json.loads(responses.calls[-1].request.body)
+    assert body["start_date"] == "2026-06-16T18:00:00"
+    assert body["end_date"] == "2026-06-17T12:00:00"
+
+
+@responses.activate
+def test_time_schedule_without_timezone_keeps_utc_wallclock():
+    # No timezone configured -> fall back to the datetime as-is (UTC wall-clock).
+    mock_auth()
+    provider = make_provider()
+    starts_at = datetime(2026, 6, 16, 16, 0, 0, tzinfo=timezone.utc)
+    ends_at = datetime(2026, 6, 17, 10, 0, 0, tzinfo=timezone.utc)
+    mock_add_time_schedule(starts_at, ends_at)
+    provider._add_time_schedule_to_access_group(ACCESS_GROUP_ID, starts_at, ends_at)
+    body = json.loads(responses.calls[-1].request.body)
+    assert body["start_date"] == "2026-06-16T16:00:00"
+    assert body["end_date"] == "2026-06-17T10:00:00"
+
+
+@responses.activate
 def test_create_pin_success():
     mock_auth()
     provider = make_provider()

@@ -2,6 +2,7 @@ import requests
 import json
 import base64
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from roomdoo_locks_base import BaseLockProvider, AccessGrant
 from roomdoo_locks_base.exceptions import (
@@ -52,6 +53,7 @@ class SaltoProvider(BaseLockProvider):
         guest_first_name: str = "Roomdoo",
         guest_last_name: str = "Guest",
         guest_email: str = "",
+        time_zone: str = None,
     ):
         self.clientId = clientId
         self.clientSecret = clientSecret
@@ -64,6 +66,11 @@ class SaltoProvider(BaseLockProvider):
         self.guest_first_name = guest_first_name
         self.guest_last_name = guest_last_name
         self.guest_email = guest_email
+        # IANA timezone the site's hardware (the IQ) enforces schedules
+        # against — the hotel's local timezone. Salto stores time-schedule
+        # start_date/end_date as naive wall-clock and the IQ applies them in
+        # its own timezone, NOT UTC, so we localize before serializing.
+        self.time_zone = time_zone
         self.accessToken = None
         self._authenticate()
 
@@ -477,6 +484,20 @@ class SaltoProvider(BaseLockProvider):
         except requests.exceptions.ConnectionError:
             raise LockConnectionError("Unable to connect to Salto API")
 
+    # ── time-schedule datetime formatting ─────────────────────────────────────
+
+    def _fmt_schedule_datetime(self, dt: datetime) -> str:
+        """Serialize a time-schedule datetime the way Salto expects.
+
+        Salto stores start_date/end_date as naive wall-clock and the site's IQ
+        enforces them in its own (the hotel's) timezone, not UTC. The caller
+        passes UTC-aware datetimes, so convert to ``self.time_zone`` first; with
+        no timezone configured, fall back to the datetime as-is (UTC wall-clock).
+        """
+        if self.time_zone:
+            dt = dt.astimezone(ZoneInfo(self.time_zone))
+        return dt.strftime("%Y-%m-%dT%H:%M:%S")
+
     # ── add_time_schedule_to_access_group ─────────────────────────────────────
 
     def _add_time_schedule_to_access_group(
@@ -497,9 +518,9 @@ class SaltoProvider(BaseLockProvider):
                 # would make a recurring daily window and lock the guest out
                 # overnight on multi-day stays.
                 json={
-                    "end_date": end_date.strftime("%Y-%m-%dT%H:%M:%S"),
+                    "end_date": self._fmt_schedule_datetime(end_date),
                     "end_time": "23:59:59",
-                    "start_date": start_date.strftime("%Y-%m-%dT%H:%M:%S"),
+                    "start_date": self._fmt_schedule_datetime(start_date),
                     "start_time": "00:00:00",
                     "friday": True,
                     "monday": True,
@@ -545,12 +566,12 @@ class SaltoProvider(BaseLockProvider):
                 # See _add_time_schedule_to_access_group: continuous window, the
                 # exact hours live in start_date/end_date.
                 json={
-                    "end_date": end_date.strftime("%Y-%m-%dT%H:%M:%S"),
+                    "end_date": self._fmt_schedule_datetime(end_date),
                     "end_time": "23:59:59",
                     "friday": True,
                     "monday": True,
                     "saturday": True,
-                    "start_date": start_date.strftime("%Y-%m-%dT%H:%M:%S"),
+                    "start_date": self._fmt_schedule_datetime(start_date),
                     "start_time": "00:00:00",
                     "sunday": True,
                     "thursday": True,
