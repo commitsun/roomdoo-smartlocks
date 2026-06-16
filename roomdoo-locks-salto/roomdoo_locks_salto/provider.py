@@ -278,7 +278,12 @@ class SaltoProvider(BaseLockProvider):
         rather than hardcoded. Needs no ``role_id`` itself, so it can run before
         one is configured."""
         return [
-            {"id": role.get("id"), "name": role.get("name")}
+            {
+                "id": role.get("id"),
+                # The API exposes the readable label as ``customer_reference``
+                # (e.g. "Site User"); ``code`` is the machine slug fallback.
+                "name": role.get("customer_reference") or role.get("code"),
+            }
             for role in self._get_roles_from_site()
         ]
 

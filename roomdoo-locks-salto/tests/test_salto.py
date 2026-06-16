@@ -578,11 +578,18 @@ def test_list_roles_returns_id_and_name():
     provider = make_provider()
     responses.get(
         f"{API_BASE_ACC}/v1.2/sites/{SITE_ID}/roles",
-        json={"items": [{"id": "r1", "name": "User"}, {"id": "r2", "name": "Admin"}]},
+        json={
+            "items": [
+                # The API labels roles with ``customer_reference``; ``code`` is
+                # the fallback slug when no reference is set.
+                {"id": "r1", "customer_reference": "Site User", "code": "site_user"},
+                {"id": "r2", "customer_reference": None, "code": "site_admin"},
+            ]
+        },
     )
     assert provider.list_roles() == [
-        {"id": "r1", "name": "User"},
-        {"id": "r2", "name": "Admin"},
+        {"id": "r1", "name": "Site User"},
+        {"id": "r2", "name": "site_admin"},
     ]
 
 
