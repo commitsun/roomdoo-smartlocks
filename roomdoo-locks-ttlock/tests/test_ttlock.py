@@ -3,7 +3,6 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 import responses
-
 from roomdoo_locks_base.exceptions import (
     LockAuthError,
     LockOfflineError,

@@ -28,18 +28,15 @@ session token). Endpoint layout (replace ``<host>``):
 
 from __future__ import annotations
 
+import contextlib
 import json
 import secrets
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Any, ClassVar, cast
 
 import urllib3
 from requests import Session
-from zeep import Client, Settings
-from zeep.exceptions import Fault, TransportError
-from zeep.transports import Transport
-
 from roomdoo_locks_base import AccessGrant, BaseLockProvider
 from roomdoo_locks_base.exceptions import (
     LockAPIError,
@@ -50,6 +47,9 @@ from roomdoo_locks_base.exceptions import (
     LockOfflineError,
     LockOperationError,
 )
+from zeep import Client, Settings
+from zeep.exceptions import Fault, TransportError
+from zeep.transports import Transport
 
 from roomdoo_locks_tesa.exceptions import (
     LockAlreadyClearedError,
@@ -67,8 +67,8 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 @dataclass
 class PreAssignation:
     pre_assignation_id: int
-    date_pre_activation: Optional[str]
-    date_pre_expiration: Optional[str]
+    date_pre_activation: str | None
+    date_pre_expiration: str | None
     grants_preassigned: list[str] = field(default_factory=list)
 
 
@@ -78,10 +78,10 @@ class RoomInfo:
     door_name: str
     room_occupied: bool
     room_preassigned: bool
-    date_activation: Optional[str]
-    date_expiration: Optional[str]
-    battery_status: Optional[str]
-    battery_percentage: Optional[int]
+    date_activation: str | None
+    date_expiration: str | None
+    battery_status: str | None
+    battery_percentage: int | None
     grants_occupied: list[str] = field(default_factory=list)
     pre_assignations: list[PreAssignation] = field(default_factory=list)
 
@@ -94,7 +94,7 @@ class RoomInfo:
 class TesaSmartairProvider(BaseLockProvider):
     """TESA Smartair implementation of the access-grant contract."""
 
-    _WSDL = {
+    _WSDL: ClassVar[dict[str, str]] = {
         "guests": "GuestsWebService?wsdl",
         "users": "UsersWebService?wsdl",
         "doors": "DoorsWebService?wsdl",
@@ -147,10 +147,10 @@ class TesaSmartairProvider(BaseLockProvider):
                     settings=self._settings,
                 )
             except Exception as e:
-                raise LockConnectionError(f"Cannot load WSDL for {service}: {e}")
+                raise LockConnectionError(f"Cannot load WSDL for {service}: {e}") from e
         return self._clients[service]
 
-    def _svc(self, service: str):
+    def _svc(self, service: str) -> Any:
         return self._client(service).service
 
     # ------------------------------------------------------------------
@@ -167,7 +167,7 @@ class TesaSmartairProvider(BaseLockProvider):
     # Response handling
     # ------------------------------------------------------------------
 
-    def _handle(self, result) -> object:
+    def _handle(self, result: Any) -> Any:
         """
         Validate an operationResult zeep object and raise on RESULT_ERROR.
         Returns the result object on success so callers can read extra fields.
@@ -185,7 +185,7 @@ class TesaSmartairProvider(BaseLockProvider):
         return result
 
     @staticmethod
-    def _raise_error(error_type: str, error_code: str, detail: str):
+    def _raise_error(error_type: str, error_code: str, detail: str) -> None:
         msg = f"[{error_code}] {error_type}"
         if detail:
             msg += f" — {detail}"
@@ -217,7 +217,7 @@ class TesaSmartairProvider(BaseLockProvider):
             raise LockOfflineError(msg)
         raise LockOperationError(msg)
 
-    def _check_suboperations(self, result) -> None:
+    def _check_suboperations(self, result: Any) -> None:
         """
         Some Guests operations (notably checkout) return RESULT_OK at the top
         level but nest the real failure inside subOperations. Raise on the first
@@ -233,18 +233,18 @@ class TesaSmartairProvider(BaseLockProvider):
                 error_detail = getattr(sub, "errorDetail", None) or ""
                 self._raise_error(str(error_type), str(error_code), str(error_detail))
 
-    def _call(self, service: str, method: str, **kwargs):
+    def _call(self, service: str, method: str, **kwargs: Any) -> Any:
         """Unified SOAP call with error handling."""
         svc = self._svc(service)
         soap_method = getattr(svc, method)
         try:
             result = soap_method(**self._auth(), **kwargs)
         except Fault as e:
-            raise LockOperationError(f"SOAP Fault in {method}: {e}")
+            raise LockOperationError(f"SOAP Fault in {method}: {e}") from e
         except TransportError as e:
-            raise LockConnectionError(f"Transport error in {method}: {e}")
+            raise LockConnectionError(f"Transport error in {method}: {e}") from e
         except Exception as e:
-            raise LockConnectionError(f"Unexpected error in {method}: {e}")
+            raise LockConnectionError(f"Unexpected error in {method}: {e}") from e
         return self._handle(result)
 
     # ------------------------------------------------------------------
@@ -265,7 +265,13 @@ class TesaSmartairProvider(BaseLockProvider):
         return datetime.now(timezone.utc)
 
     @staticmethod
-    def _guest_data(room_id, starts_at, ends_at, pin, grants=None) -> dict:
+    def _guest_data(
+        room_id: str | int,
+        starts_at: datetime,
+        ends_at: datetime,
+        pin: str,
+        grants: list[str] | None = None,
+    ) -> dict:
         data: dict = {
             "roomId": int(room_id),
             "dateActivation": starts_at,
@@ -283,15 +289,13 @@ class TesaSmartairProvider(BaseLockProvider):
 
     @staticmethod
     def _unpack_ref(grant_ref: str) -> dict:
-        return json.loads(grant_ref)
+        return cast("dict", json.loads(grant_ref))
 
     # ------------------------------------------------------------------
     # BaseLockProvider contract
     # ------------------------------------------------------------------
 
-    def _do_grant_access(
-        self, lock_ids: list, starts_at: datetime, ends_at: datetime, pin: str
-    ) -> AccessGrant:
+    def _do_grant_access(self, lock_ids: list, starts_at: datetime, ends_at: datetime, pin: str | None) -> AccessGrant:
         # A checkin only applies when the guest enters now; a future start means
         # the whole grant goes through precheckin instead.
         precheckin = starts_at > self._now()
@@ -303,16 +307,14 @@ class TesaSmartairProvider(BaseLockProvider):
         # the collision is surfaced.
         user_supplied = pin is not None
         attempts = 1 if user_supplied else self._MAX_PIN_ATTEMPTS
-        last_exc: Optional[LockPinCollisionError] = None
+        last_exc: LockPinCollisionError | None = None
 
         for _ in range(attempts):
             candidate = pin or self._generate_pin()
             created: list[dict] = []
             try:
                 for lock_id in lock_ids:
-                    code_id = self._open_stay(
-                        operation, lock_id, starts_at, ends_at, candidate
-                    )
+                    code_id = self._open_stay(operation, lock_id, starts_at, ends_at, candidate)
                     created.append({"lock_id": str(lock_id), "code_id": code_id})
                 return AccessGrant(
                     pin=candidate,
@@ -330,7 +332,9 @@ class TesaSmartairProvider(BaseLockProvider):
                 # only opens some doors. Roll back, then surface the error.
                 self._rollback(precheckin, created)
                 raise
-        raise last_exc
+        if last_exc is not None:
+            raise last_exc
+        raise LockOperationError("Could not grant access after PIN retries")
 
     def _open_stay(
         self,
@@ -354,23 +358,17 @@ class TesaSmartairProvider(BaseLockProvider):
 
     def _rollback(self, precheckin: bool, created: list[dict]) -> None:
         for room in created:
-            try:
+            with contextlib.suppress(Exception):
                 self._clear_stay(precheckin, room)
-            except Exception:
-                pass
 
     def _clear_stay(self, precheckin: bool, room: dict) -> None:
         if precheckin:
-            self._call(
-                "guests", "precheckinCancel", preAssignationId=int(room["code_id"])
-            )
+            self._call("guests", "precheckinCancel", preAssignationId=int(room["code_id"]))
         else:
             result = self._call("guests", "checkout", roomId=int(room["lock_id"]))
             self._check_suboperations(result)
 
-    def _do_modify_access(
-        self, grant_ref: str, starts_at: datetime, ends_at: datetime
-    ) -> AccessGrant:
+    def _do_modify_access(self, grant_ref: str, starts_at: datetime, ends_at: datetime) -> AccessGrant:
         # Smartair only allows modifying the expiration date, not the PIN or the
         # start date — so starts_at is echoed back unchanged and only ends_at is
         # pushed. The PIN does not change; the caller keeps the one from
@@ -400,10 +398,8 @@ class TesaSmartairProvider(BaseLockProvider):
         for room in ref["rooms"]:
             # Idempotent: a stay already gone (room free / pre-assignment void)
             # or a room that no longer exists still revokes without raising.
-            try:
+            with contextlib.suppress(LockNotFoundError, LockAlreadyClearedError):
                 self._clear_stay(precheckin, room)
-            except (LockNotFoundError, LockAlreadyClearedError):
-                pass
         return True
 
     def test_connection(self) -> bool:
@@ -425,7 +421,7 @@ class TesaSmartairProvider(BaseLockProvider):
         result = self._call("guests", "findAllOccupiedRooms")
         return self._parse_rooms(result)
 
-    def get_room_info(self, room_id: int) -> Optional[RoomInfo]:
+    def get_room_info(self, room_id: int) -> RoomInfo | None:
         """Info for a single room (filtered from findAllRooms — no single-room endpoint)."""
         return next(
             (r for r in self.find_all_rooms() if r.door_id == room_id),
@@ -433,7 +429,7 @@ class TesaSmartairProvider(BaseLockProvider):
         )
 
     @staticmethod
-    def _parse_rooms(result) -> list[RoomInfo]:
+    def _parse_rooms(result: Any) -> list[RoomInfo]:
         rooms = []
         door_list = getattr(result, "doorData", None) or []
         for door in door_list:
@@ -442,9 +438,7 @@ class TesaSmartairProvider(BaseLockProvider):
             battery_pct = getattr(state, "batteryPercentage", None) if state else None
 
             raw_grants = getattr(door, "grantsOccupied", None) or []
-            grants_occupied = (
-                list(raw_grants) if not isinstance(raw_grants, str) else [raw_grants]
-            )
+            grants_occupied = list(raw_grants) if not isinstance(raw_grants, str) else [raw_grants]
 
             raw_pre = getattr(door, "preAssignations", None) or []
             if not isinstance(raw_pre, list):
@@ -481,9 +475,7 @@ class TesaSmartairProvider(BaseLockProvider):
 
     def modify_grants(self, lock_id: str, grants: list[str]) -> bool:
         """Replace the grant list of an active checkin (e.g. add gym access)."""
-        self._call(
-            "guests", "checkinModifyGrants", roomId=int(lock_id), grants=grants
-        )
+        self._call("guests", "checkinModifyGrants", roomId=int(lock_id), grants=grants)
         return True
 
     def add_pin_user(
@@ -492,7 +484,7 @@ class TesaSmartairProvider(BaseLockProvider):
         pin: str,
         starts_at: datetime,
         ends_at: datetime,
-        grants: Optional[list[str]] = None,
+        grants: list[str] | None = None,
     ) -> dict:
         """
         Create a USER_PIN_USER (permanent staff PIN: cleaning, maintenance…).

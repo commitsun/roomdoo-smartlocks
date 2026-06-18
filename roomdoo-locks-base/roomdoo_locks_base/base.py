@@ -39,7 +39,7 @@ class BaseLockProvider(ABC):
         lock_ids: list,
         starts_at: datetime,
         ends_at: datetime,
-        pin: str = None,
+        pin: str | None = None,
     ) -> AccessGrant:
         """
         Grant one guest access to ``lock_ids`` between starts_at and ends_at.
@@ -77,12 +77,10 @@ class BaseLockProvider(ABC):
         lock_ids: list,
         starts_at: datetime,
         ends_at: datetime,
-        pin: str,
+        pin: str | None,
     ) -> AccessGrant: ...
 
-    def modify_access(
-        self, grant_ref: str, starts_at: datetime, ends_at: datetime
-    ) -> AccessGrant:
+    def modify_access(self, grant_ref: str, starts_at: datetime, ends_at: datetime) -> AccessGrant:
         """
         Modify the validity window of an existing grant.
 
@@ -112,9 +110,7 @@ class BaseLockProvider(ABC):
         return self._do_modify_access(grant_ref, starts_at, ends_at)
 
     @abstractmethod
-    def _do_modify_access(
-        self, grant_ref: str, starts_at: datetime, ends_at: datetime
-    ) -> AccessGrant: ...
+    def _do_modify_access(self, grant_ref: str, starts_at: datetime, ends_at: datetime) -> AccessGrant: ...
 
     def revoke_access(self, grant_ref: str) -> bool:
         """

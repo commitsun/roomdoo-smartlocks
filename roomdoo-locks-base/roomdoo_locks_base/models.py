@@ -1,6 +1,5 @@
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Optional
 
 
 @dataclass(frozen=True)
@@ -48,14 +47,11 @@ class AccessGrant:
     to manage the grant's lifecycle. Callers must not parse it.
     """
 
-    pin: Optional[str]
+    pin: str | None
     ref: str
     starts_at: datetime
     ends_at: datetime
 
     def __repr__(self) -> str:
         masked = self.pin[:1] + "***" if self.pin else "***"
-        return (
-            f"AccessGrant(pin={masked!r}, ref={self.ref!r}, "
-            f"starts_at={self.starts_at!r}, ends_at={self.ends_at!r})"
-        )
+        return f"AccessGrant(pin={masked!r}, ref={self.ref!r}, starts_at={self.starts_at!r}, ends_at={self.ends_at!r})"

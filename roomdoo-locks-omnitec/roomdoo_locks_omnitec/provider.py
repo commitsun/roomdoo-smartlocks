@@ -1,9 +1,10 @@
+import contextlib
 import json
 import secrets
 from datetime import datetime
+from typing import cast
 
 import requests
-
 from roomdoo_locks_base import AccessGrant, BaseLockProvider
 from roomdoo_locks_base.exceptions import (
     LockAPIError,
@@ -47,13 +48,13 @@ class OmnitecProvider(BaseLockProvider):
         self.clientSecret = clientSecret
         self.username = username
         self.password = password
-        self.accessToken = None
+        self.accessToken: str = ""
         self.refreshToken = None
         self._authenticate()
 
     # ── Authentication ────────────────────────────────────────────────────
 
-    def _authenticate(self):
+    def _authenticate(self) -> None:
         try:
             response = requests.get(
                 f"{self.BASE_URL}/signin/token",
@@ -65,14 +66,14 @@ class OmnitecProvider(BaseLockProvider):
                 },
             )
             body = self._handle_response(response)
-        except requests.exceptions.ConnectionError:
-            raise LockConnectionError("Unable to connect to Omnitec API")
+        except requests.exceptions.ConnectionError as err:
+            raise LockConnectionError("Unable to connect to Omnitec API") from err
         if "access_token" not in body:
             raise LockAuthError("Invalid credentials")
         self.accessToken = body["access_token"]
         self.refreshToken = body.get("refresh_token")
 
-    def _refresh_token(self):
+    def _refresh_token(self) -> None:
         try:
             response = requests.get(
                 f"{self.BASE_URL}/signin/refreshToken",
@@ -83,8 +84,8 @@ class OmnitecProvider(BaseLockProvider):
                 },
             )
             body = self._handle_response(response)
-        except requests.exceptions.ConnectionError:
-            raise LockConnectionError("Unable to connect to Omnitec API")
+        except requests.exceptions.ConnectionError as err:
+            raise LockConnectionError("Unable to connect to Omnitec API") from err
         if "access_token" not in body:
             raise LockAuthError("Failed to refresh token")
         self.accessToken = body["access_token"]
@@ -101,41 +102,29 @@ class OmnitecProvider(BaseLockProvider):
         if response.status_code == 500:
             raise LockConnectionError(f"Internal server error [500]: {response.text}")
         if not response.ok:
-            raise LockOperationError(
-                f"Unexpected error [{response.status_code}]: {response.text}"
-            )
+            raise LockOperationError(f"Unexpected error [{response.status_code}]: {response.text}")
         try:
             body = response.json()
-        except Exception:
-            raise LockAPIError("Invalid response from Omnitec API")
+        except Exception as err:
+            raise LockAPIError("Invalid response from Omnitec API") from err
 
         errcode = body.get("errcode")
         description = body.get("description", "Unknown error")
         if errcode is not None and errcode != 0:
             if errcode == -1:
-                raise LockOfflineError(
-                    f"Invalid password id [{errcode}]: {description}"
-                )
+                raise LockOfflineError(f"Invalid password id [{errcode}]: {description}")
             if errcode == -1003:
                 raise LockNotFoundError(f"Lock not found [{errcode}]: {description}")
             if errcode == -1007:
-                raise LockNotFoundError(
-                    f"No password data for this lock [{errcode}]: {description}"
-                )
+                raise LockNotFoundError(f"No password data for this lock [{errcode}]: {description}")
             if errcode == -1008:
                 raise LockNotFoundError(f"eKey not found [{errcode}]: {description}")
             if errcode in (-3, -2018, 20002, 30002):
-                raise LockNoPermissionError(
-                    f"Permission error [{errcode}]: {description}"
-                )
+                raise LockNoPermissionError(f"Permission error [{errcode}]: {description}")
             if errcode == -2009:
-                raise LockNoPermissionError(
-                    f"Invalid password id [{errcode}]: {description}"
-                )
+                raise LockNoPermissionError(f"Invalid password id [{errcode}]: {description}")
             if errcode == -2012:
-                raise LockOfflineError(
-                    f"Lock not connected to gateway [{errcode}]: {description}"
-                )
+                raise LockOfflineError(f"Lock not connected to gateway [{errcode}]: {description}")
             if errcode == -2025:
                 raise LockOperationError(f"Lock is frozen [{errcode}]: {description}")
             if errcode in (-3002, -3003):
@@ -145,9 +134,7 @@ class OmnitecProvider(BaseLockProvider):
             if errcode == -3037:
                 raise LockOfflineError(f"Lock is busy [{errcode}]: {description}")
             if errcode == -4043:
-                raise LockOperationError(
-                    f"Function not supported [{errcode}]: {description}"
-                )
+                raise LockOperationError(f"Function not supported [{errcode}]: {description}")
             if errcode == 10001:
                 raise LockAuthError(f"Invalid client [{errcode}]: {description}")
             if errcode == 10003:
@@ -159,15 +146,11 @@ class OmnitecProvider(BaseLockProvider):
             if errcode == 20009:
                 raise LockNoPermissionError(f"Invalid lock id [{errcode}]: {description}")
             if errcode == 30001:
-                raise LockNoPermissionError(
-                    f"Do not have permission [{errcode}]: {description}"
-                )
+                raise LockNoPermissionError(f"Do not have permission [{errcode}]: {description}")
             if errcode == 90000:
-                raise LockConnectionError(
-                    f"Internal server error [{errcode}]: {description}"
-                )
+                raise LockConnectionError(f"Internal server error [{errcode}]: {description}")
             raise LockOperationError(f"Operation error [{errcode}]: {description}")
-        return body
+        return cast("dict", body)
 
     def _to_ms(self, dt: datetime) -> int:
         return int(dt.timestamp() * 1000)
@@ -177,27 +160,23 @@ class OmnitecProvider(BaseLockProvider):
 
     def _request(self, method: str, path: str, extra: dict) -> dict:
         try:
-            response = requests.request(
-                method, f"{self.BASE_URL}{path}", params=self._params(extra)
-            )
-        except requests.exceptions.ConnectionError:
-            raise LockConnectionError("Unable to connect to Omnitec API")
+            response = requests.request(method, f"{self.BASE_URL}{path}", params=self._params(extra))
+        except requests.exceptions.ConnectionError as err:
+            raise LockConnectionError("Unable to connect to Omnitec API") from err
         return self._handle_response(response)
 
-    def _get_lock_passwords(self, lock_id) -> list:
+    def _get_lock_passwords(self, lock_id: str) -> list:
         body = self._request("GET", "/lock/passwords", {"ID": lock_id})
-        return body.get("list", [])
+        return cast("list", body.get("list", []))
 
-    def _read_pin(self, lock_id, pass_id: str) -> str:
+    def _read_pin(self, lock_id: str, pass_id: str) -> str:
         for p in self._get_lock_passwords(lock_id):
             if str(p["keyboardPwdId"]) == str(pass_id):
-                return p["keyboardPwd"]
+                return cast("str", p["keyboardPwd"])
         return ""
 
     def _generate_pin(self) -> str:
-        return "".join(
-            secrets.choice(self.PASSCODE_ALPHABET) for _ in range(self.PASSCODE_LENGTH)
-        )
+        return "".join(secrets.choice(self.PASSCODE_ALPHABET) for _ in range(self.PASSCODE_LENGTH))
 
     @staticmethod
     def _pack_ref(targets: list) -> str:
@@ -205,13 +184,11 @@ class OmnitecProvider(BaseLockProvider):
 
     @staticmethod
     def _unpack_ref(grant_ref: str) -> list:
-        return json.loads(grant_ref)
+        return cast("list", json.loads(grant_ref))
 
     # ── Per-lock primitives ───────────────────────────────────────────────
 
-    def _add_passcode(
-        self, lock_id, pin: str, starts_at: datetime, ends_at: datetime
-    ) -> str:
+    def _add_passcode(self, lock_id: str, pin: str, starts_at: datetime, ends_at: datetime) -> str:
         body = self._request(
             "POST",
             "/password",
@@ -225,9 +202,7 @@ class OmnitecProvider(BaseLockProvider):
         )
         return str(body["keyboardPwdId"])
 
-    def _change_passcode(
-        self, lock_id, pass_id: str, starts_at: datetime, ends_at: datetime
-    ) -> None:
+    def _change_passcode(self, lock_id: str, pass_id: str, starts_at: datetime, ends_at: datetime) -> None:
         # ``password`` omitted on purpose: changing only the window keeps the
         # existing PIN, so the same number stays valid on every lock. ``type=1``
         # matches the field-tested code.
@@ -243,22 +218,18 @@ class OmnitecProvider(BaseLockProvider):
             },
         )
 
-    def _delete_passcode(self, lock_id, pass_id: str) -> None:
-        try:
+    def _delete_passcode(self, lock_id: str, pass_id: str) -> None:
+        # Idempotent: a passcode that is already gone is a successful revoke.
+        with contextlib.suppress(LockNotFoundError, LockNoPermissionError):
             self._request(
                 "DELETE",
                 "/password",
                 {"ID": lock_id, "passID": pass_id, "type": 2},
             )
-        except (LockNotFoundError, LockNoPermissionError):
-            # Idempotent: a passcode that is already gone is a successful revoke.
-            pass
 
     # ── BaseLockProvider contract ─────────────────────────────────────────
 
-    def _do_grant_access(
-        self, lock_ids: list, starts_at: datetime, ends_at: datetime, pin: str
-    ) -> AccessGrant:
+    def _do_grant_access(self, lock_ids: list, starts_at: datetime, ends_at: datetime, pin: str | None) -> AccessGrant:
         pin = pin or self._generate_pin()
         created = []
         try:
@@ -269,10 +240,8 @@ class OmnitecProvider(BaseLockProvider):
             # All-or-nothing: roll back what we created, best-effort, so a
             # retry starts clean instead of leaving orphan passcodes.
             for target in created:
-                try:
+                with contextlib.suppress(Exception):
                     self._delete_passcode(target["ID"], target["passID"])
-                except Exception:
-                    pass
             raise
         return AccessGrant(
             pin=pin,
@@ -281,18 +250,14 @@ class OmnitecProvider(BaseLockProvider):
             ends_at=ends_at,
         )
 
-    def _do_modify_access(
-        self, grant_ref: str, starts_at: datetime, ends_at: datetime
-    ) -> AccessGrant:
+    def _do_modify_access(self, grant_ref: str, starts_at: datetime, ends_at: datetime) -> AccessGrant:
         targets = self._unpack_ref(grant_ref)
         for target in targets:
             self._change_passcode(target["ID"], target["passID"], starts_at, ends_at)
         pin = ""
         if targets:
             pin = self._read_pin(targets[0]["ID"], targets[0]["passID"])
-        return AccessGrant(
-            pin=pin, ref=grant_ref, starts_at=starts_at, ends_at=ends_at
-        )
+        return AccessGrant(pin=pin, ref=grant_ref, starts_at=starts_at, ends_at=ends_at)
 
     def _do_revoke_access(self, grant_ref: str) -> bool:
         for target in self._unpack_ref(grant_ref):
@@ -305,6 +270,6 @@ class OmnitecProvider(BaseLockProvider):
 
     # ── Extras ────────────────────────────────────────────────────────────
 
-    def open_lock(self, lock_id) -> bool:
+    def open_lock(self, lock_id: str) -> bool:
         self._request("PUT", "/lock/unlock", {"ID": lock_id})
         return True
