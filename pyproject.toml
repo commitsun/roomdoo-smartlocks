@@ -26,9 +26,11 @@ pythonpath = [
     "roomdoo-locks-ttlock",
     "roomdoo-locks-omnitec",
     "roomdoo-locks-salto",
+    "roomdoo-locks-tesa",
 ]
 testpaths = [
     "roomdoo-locks-ttlock/tests",
     "roomdoo-locks-omnitec/tests",
     "roomdoo-locks-salto/tests",
+    "roomdoo-locks-tesa/tests",
 ]

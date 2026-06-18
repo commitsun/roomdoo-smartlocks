@@ -25,6 +25,7 @@ jobs:
           pip install -e "./roomdoo-locks-ttlock[dev]"
           pip install -e "./roomdoo-locks-omnitec[dev]"
           pip install -e "./roomdoo-locks-salto[dev]"
+          pip install -e "./roomdoo-locks-tesa[dev]"
 
       - name: Run tests
         run: pytest
