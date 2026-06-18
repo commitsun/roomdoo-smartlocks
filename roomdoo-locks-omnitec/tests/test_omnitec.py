@@ -3,7 +3,6 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 import responses
-
 from roomdoo_locks_base.exceptions import LockAuthError, LockOfflineError
 from roomdoo_locks_omnitec import OmnitecProvider
 
@@ -97,11 +96,7 @@ def test_grant_access_rolls_back_on_partial_failure(window):
     with pytest.raises(LockOfflineError):
         provider.grant_access([LOCK_A, LOCK_B], starts_at, ends_at, pin="135790")
 
-    delete_calls = [
-        c
-        for c in responses.calls
-        if c.request.method == "DELETE" and c.request.url.startswith(DELETE_URL)
-    ]
+    delete_calls = [c for c in responses.calls if c.request.method == "DELETE" and c.request.url.startswith(DELETE_URL)]
     assert len(delete_calls) == 1
     assert "passID=111" in delete_calls[0].request.url
 
@@ -114,9 +109,7 @@ def test_modify_access_returns_pin(window):
     ref = json.dumps([{"ID": LOCK_A, "passID": "111"}])
 
     responses.put(CHANGE_URL, json={"errcode": 0})
-    responses.get(
-        LIST_URL, json={"list": [{"keyboardPwdId": 111, "keyboardPwd": "135790"}]}
-    )
+    responses.get(LIST_URL, json={"list": [{"keyboardPwdId": 111, "keyboardPwd": "135790"}]})
 
     grant = provider.modify_access(ref, starts_at, new_ends_at)
 
@@ -128,9 +121,7 @@ def test_modify_access_returns_pin(window):
 @responses.activate
 def test_revoke_access_deletes_every_lock():
     provider = make_provider()
-    ref = json.dumps(
-        [{"ID": LOCK_A, "passID": "111"}, {"ID": LOCK_B, "passID": "222"}]
-    )
+    ref = json.dumps([{"ID": LOCK_A, "passID": "111"}, {"ID": LOCK_B, "passID": "222"}])
     responses.delete(DELETE_URL, json={"errcode": 0})
 
     assert provider.revoke_access(ref) is True

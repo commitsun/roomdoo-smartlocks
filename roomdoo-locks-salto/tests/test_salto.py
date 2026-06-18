@@ -1,37 +1,37 @@
 import json
+from datetime import datetime, timedelta, timezone
+
+import pytest
 import requests
 import responses
-import pytest
-from datetime import datetime, timezone, timedelta
-
-from roomdoo_locks_salto import SaltoProvider
 from roomdoo_locks_base.exceptions import (
     LockAuthError,
     LockConnectionError,
     LockNotFoundError,
     LockOperationError,
 )
+from roomdoo_locks_salto import SaltoProvider
 
 # ── Test constants ────────────────────────────────────────────────────────────
 
-CLIENT_ID        = "fake_client_id"
-CLIENT_SECRET    = "fake_client_secret"
-USERNAME         = "fake_user"
-PASSWORD         = "fake_pass"
-SITE_ID          = "fake_site_id"
-LOCK_ID          = "fake_lock_id"
-LOCK_ID_2        = "fake_lock_id_2"
-LOCK_IDS         = [LOCK_ID, LOCK_ID_2]
-SITE_USER_ID     = "fake_site_user_id"
-USER_ID          = "fake_user_id"
-ACCESS_GROUP_ID  = "fake_access_group_id"
+CLIENT_ID = "fake_client_id"
+CLIENT_SECRET = "fake_client_secret"
+USERNAME = "fake_user"
+PASSWORD = "fake_pass"
+SITE_ID = "fake_site_id"
+LOCK_ID = "fake_lock_id"
+LOCK_ID_2 = "fake_lock_id_2"
+LOCK_IDS = [LOCK_ID, LOCK_ID_2]
+SITE_USER_ID = "fake_site_user_id"
+USER_ID = "fake_user_id"
+ACCESS_GROUP_ID = "fake_access_group_id"
 TIME_SCHEDULE_ID = "fake_time_schedule_id"
-ROLE_ID          = "fake_role_id"
+ROLE_ID = "fake_role_id"
 
-IDENTITY_URL_ACC  = "https://identity-acc.eu.my-clay.com/connect/token"
+IDENTITY_URL_ACC = "https://identity-acc.eu.my-clay.com/connect/token"
 IDENTITY_URL_PROD = "https://identity.eu.my-clay.com/connect/token"
-API_BASE_ACC      = "https://clp-accept-user.my-clay.com"
-API_BASE_PROD     = "https://user.my-clay.com"
+API_BASE_ACC = "https://clp-accept-user.my-clay.com"
+API_BASE_PROD = "https://user.my-clay.com"
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -50,9 +50,7 @@ def mock_auth(env="acc"):
 
 
 def make_provider(env="acc"):
-    return SaltoProvider(
-        CLIENT_ID, CLIENT_SECRET, USERNAME, PASSWORD, SITE_ID, ROLE_ID, env=env
-    )
+    return SaltoProvider(CLIENT_ID, CLIENT_SECRET, USERNAME, PASSWORD, SITE_ID, ROLE_ID, env=env)
 
 
 @pytest.fixture
@@ -89,8 +87,13 @@ def mock_add_time_schedule(start_date, end_date):
             "id": TIME_SCHEDULE_ID,
             "start_date": start_date.strftime("%Y-%m-%dT%H:%M:%S"),
             "end_date": end_date.strftime("%Y-%m-%dT%H:%M:%S"),
-            "monday": True, "tuesday": True, "wednesday": True,
-            "thursday": True, "friday": True, "saturday": True, "sunday": True,
+            "monday": True,
+            "tuesday": True,
+            "wednesday": True,
+            "thursday": True,
+            "friday": True,
+            "saturday": True,
+            "sunday": True,
             "start_time": "00:00:00",
             "end_time": "23:59:59",
         },
@@ -146,8 +149,13 @@ def mock_modify_time_schedule(start_date, end_date):
             "id": TIME_SCHEDULE_ID,
             "start_date": start_date.strftime("%Y-%m-%dT%H:%M:%S"),
             "end_date": end_date.strftime("%Y-%m-%dT%H:%M:%S"),
-            "monday": True, "tuesday": True, "wednesday": True,
-            "thursday": True, "friday": True, "saturday": True, "sunday": True,
+            "monday": True,
+            "tuesday": True,
+            "wednesday": True,
+            "thursday": True,
+            "friday": True,
+            "saturday": True,
+            "sunday": True,
             "start_time": "00:00:00",
             "end_time": "23:59:59",
         },
@@ -210,9 +218,7 @@ def test_authentication_missing_token():
 
 @responses.activate
 def test_connection_error_on_auth():
-    responses.post(
-        IDENTITY_URL_ACC, body=requests.exceptions.ConnectionError("Connection refused")
-    )
+    responses.post(IDENTITY_URL_ACC, body=requests.exceptions.ConnectionError("Connection refused"))
     with pytest.raises(LockConnectionError):
         make_provider()
 
@@ -286,9 +292,7 @@ def test_grant_access_sends_exact_checkin_checkout_datetimes(time_range):
 
     provider.grant_access([LOCK_ID], starts_at, ends_at)
 
-    schedule_call = next(
-        c for c in responses.calls if c.request.url.endswith("/time_schedules")
-    )
+    schedule_call = next(c for c in responses.calls if c.request.url.endswith("/time_schedules"))
     body = json.loads(schedule_call.request.body)
     # Exact check-in/check-out time travels in start_date/end_date; the daily
     # window stays full-day so multi-day stays are continuous (no overnight gap).
@@ -296,10 +300,7 @@ def test_grant_access_sends_exact_checkin_checkout_datetimes(time_range):
     assert body["end_date"] == ends_at.strftime("%Y-%m-%dT%H:%M:%S")
     assert body["start_time"] == "00:00:00"
     assert body["end_time"] == "23:59:59"
-    assert all(
-        body[d] for d in
-        ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
-    )
+    assert all(body[d] for d in ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"))
 
 
 @responses.activate
@@ -343,9 +344,7 @@ def test_grant_access_rejects_custom_pin(time_range):
 @responses.activate
 def test_grant_access_requires_role_id(time_range):
     mock_auth()
-    provider = SaltoProvider(
-        CLIENT_ID, CLIENT_SECRET, USERNAME, PASSWORD, SITE_ID, None, env="acc"
-    )
+    provider = SaltoProvider(CLIENT_ID, CLIENT_SECRET, USERNAME, PASSWORD, SITE_ID, None, env="acc")
     starts_at, ends_at = time_range
     with pytest.raises(LockOperationError):
         provider.grant_access([LOCK_ID], starts_at, ends_at)
@@ -385,11 +384,7 @@ def test_grant_access_rolls_back_on_lock_failure(time_range):
     with pytest.raises(LockNotFoundError):
         provider.grant_access([LOCK_ID], starts_at, ends_at)
 
-    deleted = {
-        (c.request.method, c.request.url)
-        for c in responses.calls
-        if c.request.method == "DELETE"
-    }
+    deleted = {(c.request.method, c.request.url) for c in responses.calls if c.request.method == "DELETE"}
     assert (
         "DELETE",
         f"{API_BASE_ACC}/v1.2/sites/{SITE_ID}/access_groups/{ACCESS_GROUP_ID}",
@@ -441,9 +436,7 @@ def test_revoke_access_suspends_user_without_deleting():
     assert provider.revoke_access(build_ref()) is True
     # Revoke must free the license by suspending, never delete: the user, access
     # group and audit logs stay until the retention cron calls delete_grant.
-    patch_call = next(
-        c for c in responses.calls if c.request.method == "PATCH"
-    )
+    patch_call = next(c for c in responses.calls if c.request.method == "PATCH")
     assert patch_call.request.url.endswith(f"/users/{SITE_USER_ID}/subscription")
     assert json.loads(patch_call.request.body)["state"] == "suspended"
     assert not any(c.request.method == "DELETE" for c in responses.calls)
@@ -468,13 +461,8 @@ def test_delete_grant_deletes_group_and_user():
     mock_delete_access_group()
     mock_delete_user()
     assert provider.delete_grant(build_ref()) is True
-    deleted = {
-        c.request.url for c in responses.calls if c.request.method == "DELETE"
-    }
-    assert (
-        f"{API_BASE_ACC}/v1.2/sites/{SITE_ID}/access_groups/{ACCESS_GROUP_ID}"
-        in deleted
-    )
+    deleted = {c.request.url for c in responses.calls if c.request.method == "DELETE"}
+    assert f"{API_BASE_ACC}/v1.2/sites/{SITE_ID}/access_groups/{ACCESS_GROUP_ID}" in deleted
     assert f"{API_BASE_ACC}/v1.2/sites/{SITE_ID}/users/{SITE_USER_ID}" in deleted
 
 
@@ -579,11 +567,17 @@ def test_time_schedule_localizes_to_configured_timezone():
     # The caller passes UTC instants; they must be sent as the local wall-clock.
     mock_auth()
     provider = SaltoProvider(
-        CLIENT_ID, CLIENT_SECRET, USERNAME, PASSWORD, SITE_ID, ROLE_ID,
-        env="acc", time_zone="Europe/Madrid",
+        CLIENT_ID,
+        CLIENT_SECRET,
+        USERNAME,
+        PASSWORD,
+        SITE_ID,
+        ROLE_ID,
+        env="acc",
+        time_zone="Europe/Madrid",
     )
     starts_at = datetime(2026, 6, 16, 16, 0, 0, tzinfo=timezone.utc)  # 18:00 CEST
-    ends_at = datetime(2026, 6, 17, 10, 0, 0, tzinfo=timezone.utc)    # 12:00 CEST
+    ends_at = datetime(2026, 6, 17, 10, 0, 0, tzinfo=timezone.utc)  # 12:00 CEST
     mock_add_time_schedule(starts_at, ends_at)
     provider._add_time_schedule_to_access_group(ACCESS_GROUP_ID, starts_at, ends_at)
     body = json.loads(responses.calls[-1].request.body)
