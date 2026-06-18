@@ -36,11 +36,16 @@ From the root of the monorepo:
     print(grant.ref)         # opaque handle: store it verbatim
     print(grant.starts_at, grant.ends_at)
 
-    # Extend / shorten the window (same PIN, same ref).
+    # Extend / shorten the window. Same ref; the PIN is unchanged so the
+    # returned grant.pin is None and you keep the PIN you already stored.
     grant = provider.modify_access(grant.ref, starts_at, ends_at + timedelta(days=1))
 
-    # Revoke (idempotent): deletes the access group and the guest user.
+    # Revoke (idempotent): suspends the guest user so the PIN stops working and
+    # the license is freed. The user, access group and audit logs are kept.
     provider.revoke_access(grant.ref)
+
+    # Later (retention cron): reclaim the resources for good.
+    provider.delete_grant(grant.ref)
 
 ## Constructor parameters
 
@@ -64,8 +69,17 @@ From the root of the monorepo:
 - Each `grant_access` creates a site user, an access group, a time schedule, links
   the locks and issues a PIN. If any step fails the partial state is rolled back.
 - The `ref` returned by `grant_access` is **opaque**: it carries the access group,
-  time schedule and user ids needed by `modify_access` / `revoke_access`. Store it
-  verbatim and never parse it.
+  time schedule and user ids needed by `modify_access` / `revoke_access` /
+  `delete_grant`. Store it verbatim and never parse it.
+- Salto licenses are billed per **subscribed** user. `revoke_access` therefore does
+  not delete anything: it unsubscribes the user (state `suspended`), freeing the
+  license and disabling the PIN while keeping the user, access group and audit logs.
+  `delete_grant` performs the eventual hard delete — call it from a retention cron
+  once the dispute/audit window has passed, not as the immediate reaction to a
+  checkout.
+- `modify_access` only moves the time schedule (no delete+recreate), so the original
+  PIN stays valid. Salto cannot read PINs back, so the returned `grant.pin` is `None`
+  (unchanged); keep the PIN you stored at `grant_access` time.
 - Access is modelled as the Salto **check-in / check-out** (continuous) window: the
   exact start/end times travel in `start_date` / `end_date` while the daily
   `start_time`/`end_time` stay `00:00:00`–`23:59:59` with every weekday enabled, so

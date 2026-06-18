@@ -2,6 +2,7 @@ import requests
 import json
 import base64
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from roomdoo_locks_base import BaseLockProvider, AccessGrant
 from roomdoo_locks_base.exceptions import (
@@ -46,12 +47,13 @@ class SaltoProvider(BaseLockProvider):
         username: str,
         password: str,
         siteId: str,
-        role_id: str,
+        role_id: str = None,
         env: str = "prod",
         access_group_name: str = "Roomdoo Access",
         guest_first_name: str = "Roomdoo",
         guest_last_name: str = "Guest",
         guest_email: str = "",
+        time_zone: str = None,
     ):
         self.clientId = clientId
         self.clientSecret = clientSecret
@@ -64,6 +66,11 @@ class SaltoProvider(BaseLockProvider):
         self.guest_first_name = guest_first_name
         self.guest_last_name = guest_last_name
         self.guest_email = guest_email
+        # IANA timezone the site's hardware (the IQ) enforces schedules
+        # against — the hotel's local timezone. Salto stores time-schedule
+        # start_date/end_date as naive wall-clock and the IQ applies them in
+        # its own timezone, NOT UTC, so we localize before serializing.
+        self.time_zone = time_zone
         self.accessToken = None
         self._authenticate()
 
@@ -150,6 +157,14 @@ class SaltoProvider(BaseLockProvider):
     def _do_grant_access(
         self, lock_ids: list, starts_at: datetime, ends_at: datetime, pin: str
     ) -> AccessGrant:
+        if pin is not None:
+            # Salto KS generates the PIN; setting a custom one is a premium
+            # feature this adapter does not support. Fail loud rather than
+            # silently issue a different PIN than the caller asked for.
+            raise LockOperationError("Salto does not support setting a custom PIN")
+        if not self.role_id:
+            # The site user needs a role; without one Salto rejects creation.
+            raise LockOperationError("Salto guest role_id is not configured")
         user = self._add_user_to_site(
             self.guest_first_name, self.guest_last_name, self.role_id, self.guest_email
         )
@@ -202,19 +217,30 @@ class SaltoProvider(BaseLockProvider):
         self._modify_time_schedule_in_access_group(
             ref["access_group_id"], ref["time_schedule_id"], starts_at, ends_at
         )
-        # The PIN does not change when only the validity window is updated; the
-        # caller keeps the one returned by grant_access.
-        return AccessGrant(pin="", ref=grant_ref, starts_at=starts_at, ends_at=ends_at)
+        # Only the time schedule moves; the user and PIN are untouched. Salto
+        # never lets us read a PIN back, so we report it as unchanged
+        # (``pin=None``) per the contract and the caller keeps the one returned
+        # by grant_access. Patching in place (not delete+recreate) is what keeps
+        # that original PIN valid.
+        return AccessGrant(
+            pin=None, ref=grant_ref, starts_at=starts_at, ends_at=ends_at
+        )
 
     def _do_revoke_access(self, grant_ref: str) -> bool:
+        """Make the grant non-functional by *suspending* the guest user.
+
+        Salto licenses are billed per **subscribed** user, so revoking deletes
+        nothing: it unsubscribes the user (state ``suspended``), which frees the
+        license and stops the PIN from opening any lock while the user, access
+        group and access logs are kept for audit. The hard delete that reclaims
+        those resources happens later via :meth:`delete_grant`, called by the
+        caller's retention cron once the dispute window has passed.
+
+        Idempotent: a user that is already suspended or gone still revokes.
+        """
         ref = self._unpack_ref(grant_ref)
-        # Idempotent: a grant whose resources are already gone still revokes.
         try:
-            self._delete_access_group_from_site(ref["access_group_id"])
-        except LockNotFoundError:
-            pass
-        try:
-            self._delete_user_from_site(ref["site_user_id"])
+            self._unsubscribe_user_from_site(ref["site_user_id"])
         except LockNotFoundError:
             pass
         return True
@@ -225,9 +251,48 @@ class SaltoProvider(BaseLockProvider):
 
     # ── Extras ─────────────────────────────────────────────────────────────
 
+    def delete_grant(self, grant_ref: str) -> bool:
+        """Hard-delete the resources behind a (revoked) grant.
+
+        Deletes the access group and the guest user identified by
+        ``grant_ref``, reclaiming the user and its license for good. Meant to
+        run from the caller's retention cron some time after
+        :meth:`revoke_access` suspended the user — never as the immediate
+        reaction to a checkout, which only suspends.
+
+        Idempotent: resources already gone do not raise.
+        """
+        ref = self._unpack_ref(grant_ref)
+        try:
+            self._delete_access_group_from_site(ref["access_group_id"])
+        except LockNotFoundError:
+            pass
+        try:
+            self._delete_user_from_site(ref["site_user_id"])
+        except LockNotFoundError:
+            pass
+        return True
+
     def delete_user(self, site_user_id: str) -> bool:
         self._delete_user_from_site(site_user_id)
         return True
+
+    def list_roles(self) -> list:
+        """Return the site's roles as ``[{"id": ..., "name": ...}, ...]``.
+
+        Lets the caller pick the guest role (the basic *User* role, which only
+        opens doors). Role ids are unique per site, so they must be discovered
+        rather than hardcoded. Needs no ``role_id`` itself, so it can run before
+        one is configured."""
+        return [
+            {
+                "id": role.get("id"),
+                # The API exposes the readable label as ``customer_reference``
+                # (e.g. "Site User"); ``code`` is the machine slug fallback.
+                "name": role.get("customer_reference") or role.get("code"),
+            }
+            for role in self._get_roles_from_site()
+        ]
 
     # ── get_access_groups_from_site ──────────────────────────────────────────
 
@@ -299,25 +364,30 @@ class SaltoProvider(BaseLockProvider):
         self, first_name: str, last_name: str, role_id: str, email: str
     ) -> dict:
         try:
+            payload = {
+                "alias": first_name + " " + last_name,
+                "blocked": False,
+                "first_name": first_name,
+                "last_name": last_name,
+                "override_privacy_mode": True,
+                "role_ids": [role_id],
+                "tag_id": "",
+                "toggle_easy_office_mode": True,
+                "toggle_manual_office_mode": True,
+                "use_pin": True,
+            }
+            # Email is optional. Salto rejects an empty string ("Email '' is
+            # not valid"), so only send the key when set — the PIN flow
+            # deliberately leaves it empty so Salto never emails the guest.
+            if email:
+                payload["email"] = email
             response = requests.post(
                 f"{self.API_HOSTS[self.env]}/v1.2/sites/{self.siteId}/users",
                 headers={
                     "Content-Type": "application/json",
                     "Authorization": "Bearer " + self.accessToken,
                 },
-                json={
-                    "alias": first_name + " " + last_name,
-                    "blocked": False,
-                    "email": email,
-                    "first_name": first_name,
-                    "last_name": last_name,
-                    "override_privacy_mode": True,
-                    "role_ids": [role_id],
-                    "tag_id": "",
-                    "toggle_easy_office_mode": True,
-                    "toggle_manual_office_mode": True,
-                    "use_pin": True,
-                },
+                json=payload,
             )
             self._handle_response(response)
             body = response.json()
@@ -414,6 +484,20 @@ class SaltoProvider(BaseLockProvider):
         except requests.exceptions.ConnectionError:
             raise LockConnectionError("Unable to connect to Salto API")
 
+    # ── time-schedule datetime formatting ─────────────────────────────────────
+
+    def _fmt_schedule_datetime(self, dt: datetime) -> str:
+        """Serialize a time-schedule datetime the way Salto expects.
+
+        Salto stores start_date/end_date as naive wall-clock and the site's IQ
+        enforces them in its own (the hotel's) timezone, not UTC. The caller
+        passes UTC-aware datetimes, so convert to ``self.time_zone`` first; with
+        no timezone configured, fall back to the datetime as-is (UTC wall-clock).
+        """
+        if self.time_zone:
+            dt = dt.astimezone(ZoneInfo(self.time_zone))
+        return dt.strftime("%Y-%m-%dT%H:%M:%S")
+
     # ── add_time_schedule_to_access_group ─────────────────────────────────────
 
     def _add_time_schedule_to_access_group(
@@ -434,9 +518,9 @@ class SaltoProvider(BaseLockProvider):
                 # would make a recurring daily window and lock the guest out
                 # overnight on multi-day stays.
                 json={
-                    "end_date": end_date.strftime("%Y-%m-%dT%H:%M:%S"),
+                    "end_date": self._fmt_schedule_datetime(end_date),
                     "end_time": "23:59:59",
-                    "start_date": start_date.strftime("%Y-%m-%dT%H:%M:%S"),
+                    "start_date": self._fmt_schedule_datetime(start_date),
                     "start_time": "00:00:00",
                     "friday": True,
                     "monday": True,
@@ -482,12 +566,12 @@ class SaltoProvider(BaseLockProvider):
                 # See _add_time_schedule_to_access_group: continuous window, the
                 # exact hours live in start_date/end_date.
                 json={
-                    "end_date": end_date.strftime("%Y-%m-%dT%H:%M:%S"),
+                    "end_date": self._fmt_schedule_datetime(end_date),
                     "end_time": "23:59:59",
                     "friday": True,
                     "monday": True,
                     "saturday": True,
-                    "start_date": start_date.strftime("%Y-%m-%dT%H:%M:%S"),
+                    "start_date": self._fmt_schedule_datetime(start_date),
                     "start_time": "00:00:00",
                     "sunday": True,
                     "thursday": True,

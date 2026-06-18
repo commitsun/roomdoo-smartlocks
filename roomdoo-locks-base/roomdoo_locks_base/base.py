@@ -87,7 +87,11 @@ class BaseLockProvider(ABC):
         Modify the validity window of an existing grant.
 
         The credential may change (vendors that delete+recreate internally);
-        callers must persist the returned ``ref`` and ``pin``.
+        callers must persist the returned ``ref`` and ``pin``. When the
+        returned ``pin`` is ``None`` the credential is unchanged and the
+        caller must keep the PIN it already stored — this is how a vendor
+        that keeps the same PIN but cannot read it back (e.g. Salto) reports
+        a window change. The ``ref`` is always returned and must be persisted.
 
         Args:
             grant_ref: Opaque ref returned by :meth:`grant_access`.
@@ -95,7 +99,8 @@ class BaseLockProvider(ABC):
             ends_at: New end of validity (UTC).
 
         Returns:
-            AccessGrant with the resulting credential and ref.
+            AccessGrant with the resulting ref and either the new PIN or
+            ``None`` when the PIN is unchanged.
 
         Raises:
             ValueError: Non-UTC datetimes or starts_at >= ends_at.
