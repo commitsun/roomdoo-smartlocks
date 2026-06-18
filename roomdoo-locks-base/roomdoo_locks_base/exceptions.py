@@ -43,20 +43,12 @@ class LockConnectionError(LockError):
     pass
 
 
-class LockAPIError(LockError):
-    """Vendor API returned an unexpected or invalid response."""
-
-    pass
-
-
-class LockNoPermissionError(LockError):
-    """Permission was denied by the vendor API."""
-
-    pass
-
-
 class LockOfflineError(LockError):
-    """The lock is offline or unreachable."""
+    """The lock is offline or unreachable.
+
+    Transient like LockConnectionError: the caller should retry rather than
+    treat the credential as permanently failed.
+    """
 
     pass
 
@@ -81,23 +73,14 @@ class LockCodeDeletionError(LockOperationError):
         self.new_result = new_result
         super().__init__(message)
 
-class LockAPIError(LockOperationError):
-    """Vendor API didn't return a body."""
 
-    def __init__(self, message: str):
-        self.message = message
-        super().__init__(message)
+class LockAPIError(LockOperationError):
+    """Vendor API returned an empty, unexpected or invalid response."""
+
+    pass
+
 
 class LockNoPermissionError(LockOperationError):
-    """User doesn't have permission to perform the operation on the lock."""
+    """Permission was denied by the vendor API."""
 
-    def __init__(self, message: str):
-        self.message = message
-        super().__init__(message)
-
-class LockOfflineError(LockOperationError):
-    """Lock is offline."""
-
-    def __init__(self, message: str):
-        self.message = message
-        super().__init__(message)
+    pass
