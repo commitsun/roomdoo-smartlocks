@@ -58,6 +58,7 @@ def make_door(
     date_expiration=None,
     battery_status="OK",
     battery_pct=90,
+    key_pad=None,
     grants_occupied=None,
     pre_assignations=None,
 ) -> SimpleNamespace:
@@ -70,8 +71,18 @@ def make_door(
         dateActivation=date_activation,
         dateExpiration=date_expiration,
         doorStateInfo=state,
+        keyPad=key_pad,
         grantsOccupied=grants_occupied or [],
         preAssignations=pre_assignations or [],
+    )
+
+
+def make_pre(pre_id=299) -> SimpleNamespace:
+    return SimpleNamespace(
+        preAssignationId=pre_id,
+        datePreActivation="2026-07-01T14:00:00",
+        datePreExpiration="2026-07-05T11:00:00",
+        grantsPreassigned=[],
     )
 
 
@@ -342,12 +353,16 @@ class TestModifyAccess(BaseProviderTest):
         return TesaSmartairProvider._pack_ref({"precheckin": precheckin, "rooms": rooms})
 
     def test_modify_checkin_calls_checkin_modify_date(self):
+        # Room is occupied with our PIN → it is ours → modify via checkin.
+        self.mock_svc.findAllRooms.return_value = ok_result(
+            doorData=[make_door(door_id=81, occupied=True, key_pad="4321")]
+        )
         self.mock_svc.checkinModifyDate.return_value = ok_result()
         ref = self._ref(False, [{"lock_id": "81", "code_id": "81"}])
         starts, ends = past_window()
         new_ends = ends + timedelta(hours=12)
 
-        grant = self.provider.modify_access(ref, starts, new_ends)
+        grant = self.provider.modify_access(ref, starts, new_ends, pin="4321")
 
         self.assertEqual(grant.ref, ref)
         self.assertEqual(grant.ends_at, new_ends)
@@ -358,17 +373,53 @@ class TestModifyAccess(BaseProviderTest):
         self.assertEqual(kwargs["dateExpiration"], new_ends)
 
     def test_modify_precheckin_calls_precheckin_modify_date(self):
+        # Our pre-assignment is still pending → modify via precheckin, and
+        # precheckinModifyDate must carry BOTH roomId and preAssignationId.
+        self.mock_svc.findAllRooms.return_value = ok_result(
+            doorData=[make_door(door_id=82, preassigned=True, pre_assignations=[make_pre(299)])]
+        )
         self.mock_svc.precheckinModifyDate.return_value = ok_result()
         ref = self._ref(True, [{"lock_id": "82", "code_id": "299"}])
         starts, ends = future_window()
         new_ends = ends + timedelta(hours=12)
 
-        self.provider.modify_access(ref, starts, new_ends)
+        self.provider.modify_access(ref, starts, new_ends, pin="5555")
 
         self.mock_svc.checkinModifyDate.assert_not_called()
         kwargs = self.mock_svc.precheckinModifyDate.call_args.kwargs
+        self.assertEqual(kwargs["roomId"], 82)
         self.assertEqual(kwargs["preAssignationId"], 299)
         self.assertEqual(kwargs["dateExpiration"], new_ends)
+
+    def test_modify_activated_precheckin_falls_to_checkin(self):
+        # Created as precheckin, but Smartair auto-activated it: the
+        # pre-assignment is gone and the room is now occupied with our PIN, so
+        # modify must switch to the check-in path (this is the bug that raised
+        # ERROR_BAD_PARAMETERS against the real server).
+        self.mock_svc.findAllRooms.return_value = ok_result(
+            doorData=[make_door(door_id=82, occupied=True, key_pad="5555")]
+        )
+        self.mock_svc.checkinModifyDate.return_value = ok_result()
+        ref = self._ref(True, [{"lock_id": "82", "code_id": "299"}])
+        starts, ends = past_window()
+        new_ends = ends + timedelta(hours=12)
+
+        self.provider.modify_access(ref, starts, new_ends, pin="5555")
+
+        self.mock_svc.precheckinModifyDate.assert_not_called()
+        self.assertEqual(self.mock_svc.checkinModifyDate.call_args.kwargs["roomId"], 82)
+
+    def test_modify_raises_when_grant_gone(self):
+        # Room occupied by a different PIN (someone else took it over) → not
+        # ours → raise rather than modify a stranger's stay.
+        self.mock_svc.findAllRooms.return_value = ok_result(
+            doorData=[make_door(door_id=81, occupied=True, key_pad="0000")]
+        )
+        ref = self._ref(False, [{"lock_id": "81", "code_id": "81"}])
+        starts, ends = past_window()
+        with self.assertRaises(LockNotFoundError):
+            self.provider.modify_access(ref, starts, ends + timedelta(hours=1), pin="4321")
+        self.mock_svc.checkinModifyDate.assert_not_called()
 
     def test_modify_rejects_bad_window(self):
         ref = self._ref(False, [{"lock_id": "81", "code_id": "81"}])
@@ -387,31 +438,69 @@ class TestRevokeAccess(BaseProviderTest):
         return TesaSmartairProvider._pack_ref({"precheckin": precheckin, "rooms": rooms})
 
     def test_revoke_checkin_checks_out_every_room(self):
+        self.mock_svc.findAllRooms.return_value = ok_result(
+            doorData=[
+                make_door(door_id=81, occupied=True, key_pad="4321"),
+                make_door(door_id=82, occupied=True, key_pad="4321"),
+            ]
+        )
         self.mock_svc.checkout.return_value = ok_result()
         ref = self._ref(
             False,
             [{"lock_id": "81", "code_id": "81"}, {"lock_id": "82", "code_id": "82"}],
         )
-        self.assertTrue(self.provider.revoke_access(ref))
+        self.assertTrue(self.provider.revoke_access(ref, pin="4321"))
         room_ids = [c.kwargs["roomId"] for c in self.mock_svc.checkout.call_args_list]
         self.assertEqual(room_ids, [81, 82])
 
     def test_revoke_precheckin_cancels_pre_assignation(self):
+        self.mock_svc.findAllRooms.return_value = ok_result(
+            doorData=[make_door(door_id=82, preassigned=True, pre_assignations=[make_pre(299)])]
+        )
         self.mock_svc.precheckinCancel.return_value = ok_result()
         ref = self._ref(True, [{"lock_id": "82", "code_id": "299"}])
-        self.assertTrue(self.provider.revoke_access(ref))
+        self.assertTrue(self.provider.revoke_access(ref, pin="5555"))
         self.mock_svc.checkout.assert_not_called()
         self.assertEqual(self.mock_svc.precheckinCancel.call_args.kwargs["preAssignationId"], 299)
 
-    def test_revoke_is_idempotent_when_room_not_occupied(self):
+    def test_revoke_activated_precheckin_checks_out(self):
+        # Auto-activated pre-assignment: the room is now occupied with our PIN,
+        # so revoke must check it out, not cancel a pre-assignment that's gone.
+        self.mock_svc.findAllRooms.return_value = ok_result(
+            doorData=[make_door(door_id=82, occupied=True, key_pad="5555")]
+        )
+        self.mock_svc.checkout.return_value = ok_result()
+        ref = self._ref(True, [{"lock_id": "82", "code_id": "299"}])
+        self.assertTrue(self.provider.revoke_access(ref, pin="5555"))
+        self.mock_svc.precheckinCancel.assert_not_called()
+        self.assertEqual(self.mock_svc.checkout.call_args.kwargs["roomId"], 82)
+
+    def test_revoke_skips_when_room_free(self):
+        # Phase "gone": the room is free, nothing of ours to clear. Idempotent
+        # True with no checkout call.
+        self.mock_svc.findAllRooms.return_value = ok_result(doorData=[make_door(door_id=81, occupied=False)])
+        ref = self._ref(False, [{"lock_id": "81", "code_id": "81"}])
+        self.assertTrue(self.provider.revoke_access(ref, pin="4321"))
+        self.mock_svc.checkout.assert_not_called()
+
+    def test_revoke_never_clears_stranger(self):
+        # Room occupied by a different PIN → not ours → never check it out.
+        self.mock_svc.findAllRooms.return_value = ok_result(
+            doorData=[make_door(door_id=81, occupied=True, key_pad="0000")]
+        )
+        ref = self._ref(False, [{"lock_id": "81", "code_id": "81"}])
+        self.assertTrue(self.provider.revoke_access(ref, pin="4321"))
+        self.mock_svc.checkout.assert_not_called()
+
+    def test_revoke_suppresses_race_on_checkout(self):
+        # Resolves to ours, but the stay is cleared between read and checkout →
+        # the idempotent error is suppressed and revoke still returns True.
+        self.mock_svc.findAllRooms.return_value = ok_result(
+            doorData=[make_door(door_id=81, occupied=True, key_pad="4321")]
+        )
         self.mock_svc.checkout.return_value = error_result("RESULT_ERROR_CHECKIN_ROOM_NOT_OCCUPIED", "310")
         ref = self._ref(False, [{"lock_id": "81", "code_id": "81"}])
-        self.assertTrue(self.provider.revoke_access(ref))
-
-    def test_revoke_is_idempotent_when_pre_assignation_invalid(self):
-        self.mock_svc.precheckinCancel.return_value = error_result("RESULT_ERROR_CHECKIN_INVALID_ROOM", "307")
-        ref = self._ref(True, [{"lock_id": "82", "code_id": "999"}])
-        self.assertTrue(self.provider.revoke_access(ref))
+        self.assertTrue(self.provider.revoke_access(ref, pin="4321"))
 
     def test_revoke_idempotent_error_maps_to_already_cleared(self):
         self.mock_svc.checkout.return_value = error_result("RESULT_ERROR_CHECKIN_ROOM_NOT_OCCUPIED", "310")
