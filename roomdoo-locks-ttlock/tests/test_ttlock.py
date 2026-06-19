@@ -184,3 +184,20 @@ def test_get_lock_list():
     )
     locks = provider.get_lock_list()
     assert locks["total"] == 1
+
+
+@responses.activate
+def test_list_locks_paginates_and_maps_id_name():
+    provider = make_provider()
+    responses.get(
+        "https://euapi.ttlock.com/v3/lock/list",
+        json={"pages": 2, "pageNo": 1, "list": [{"lockId": 111, "lockAlias": "Room 101"}]},
+    )
+    responses.get(
+        "https://euapi.ttlock.com/v3/lock/list",
+        json={"pages": 2, "pageNo": 2, "list": [{"lockId": 222, "lockAlias": "Room 102"}]},
+    )
+    assert provider.list_locks() == [
+        {"id": "111", "name": "Room 101"},
+        {"id": "222", "name": "Room 102"},
+    ]

@@ -278,6 +278,17 @@ class OmnitecProvider(BaseLockProvider):
 
     # ── Extras ────────────────────────────────────────────────────────────
 
+    def list_locks(self) -> list[dict]:
+        """Locks as ``[{"id": lockId, "name": lockAlias}, ...]``.
+
+        ``GET /lock/list`` returns a TTLock-shaped payload
+        (``{"list": [{"lockId", "lockAlias", ...}], "pages", "total"}``).
+        A single high ``itemsPerPage`` pulls every lock — an account holds a
+        few hundred at most — as the field-tested listing script does.
+        """
+        body = self._request("GET", "/lock/list", {"itemsPerPage": 999})
+        return [{"id": str(lock.get("lockId")), "name": lock.get("lockAlias") or ""} for lock in body.get("list") or []]
+
     def open_lock(self, lock_id: str) -> bool:
         self._request("PUT", "/lock/unlock", {"ID": lock_id})
         return True
