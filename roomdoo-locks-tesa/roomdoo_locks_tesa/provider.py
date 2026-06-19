@@ -13,6 +13,14 @@ Two TESA peculiarities shape the adapter:
   in the future the grant is created through ``precheckin`` instead, which
   yields a ``preAssignationId`` to manage it until activation. The whole grant
   is one or the other, decided from ``starts_at`` against the current time.
+  Smartair then *auto-activates* a pre-assignment into a check-in when its
+  activation time passes, so the create-time choice goes stale: modify/revoke
+  re-read the room's live state and match it back to the grant by its PIN
+  (Smartair returns the active ``keyPad``, unique among live credentials)
+  before acting, rather than trusting the frozen flag. The ModifyDate ops can
+  only move the *expiration*, never the activation, so a modify that changes
+  the start (e.g. arrival delayed, flipping a live check-in back to a future
+  pre-assignment) is realised by revoke + recreate, reusing the same PIN.
 
 * **PIN collisions.** Smartair rejects a PIN already active on another lock with
   an overlapping window. An auto-generated PIN is retried with a fresh value;
@@ -82,6 +90,10 @@ class RoomInfo:
     date_expiration: str | None
     battery_status: str | None
     battery_percentage: int | None
+    # PIN currently active on the occupied check-in (Smartair exposes it as
+    # ``keyPad``). It is the only durable handle that ties a check-in back to
+    # the grant that created it, so modify/revoke use it to confirm ownership.
+    key_pad: str | None = None
     grants_occupied: list[str] = field(default_factory=list)
     pre_assignations: list[PreAssignation] = field(default_factory=list)
 
@@ -368,40 +380,190 @@ class TesaSmartairProvider(BaseLockProvider):
             result = self._call("guests", "checkout", roomId=int(room["lock_id"]))
             self._check_suboperations(result)
 
-    def _do_modify_access(self, grant_ref: str, starts_at: datetime, ends_at: datetime) -> AccessGrant:
-        # Smartair only allows modifying the expiration date, not the PIN or the
-        # start date — so starts_at is echoed back unchanged and only ends_at is
-        # pushed. The PIN does not change and Smartair never reads it back, so
-        # we signal "unchanged" with pin=None (the contract's convention); the
-        # caller keeps the PIN it got from grant_access. Returning "" would be a
-        # real empty value and overwrite the stored PIN.
+    # Phases a grant's room can be in *right now*. Re-resolved from live server
+    # state instead of trusting the flag frozen in the ref at grant time.
+    _PHASE_PRECHECKIN = "precheckin"  # still a pending pre-assignment (our id present)
+    _PHASE_CHECKIN = "checkin"  # activated into an occupied check-in that is ours
+    _PHASE_GONE = "gone"  # not ours anymore: cancelled, expired or taken over
+
+    def _resolve_phase(
+        self,
+        info: RoomInfo | None,
+        room: dict,
+        created_precheckin: bool,
+        pin: str | None,
+    ) -> str:
+        """Decide which Smartair operation set applies to ``room`` *now*.
+
+        The ref records how the grant was *created* (whether ``code_id`` is a
+        preAssignationId), but Smartair auto-activates a pre-assignment into a
+        check-in once its activation time passes — the frozen flag then lies.
+        So we read the room's live state and match it back to our grant:
+
+        * our preAssignationId still pending  -> precheckin ops
+        * occupied and its PIN is ours        -> check-in ops
+        * anything else                       -> gone
+
+        "Gone" is the safe default: we never touch a stay we cannot prove is
+        ours (the pre-assignment may have been cancelled elsewhere, or another
+        guest may have taken the room over). Confirming ownership needs the PIN,
+        so without it an activated grant resolves to gone rather than guessing.
+        """
+        if info is None:
+            return self._PHASE_GONE
+        if created_precheckin:
+            pre_id = str(room["code_id"])
+            if any(str(p.pre_assignation_id) == pre_id for p in info.pre_assignations):
+                return self._PHASE_PRECHECKIN
+        if info.room_occupied and pin is not None and info.key_pad == pin:
+            return self._PHASE_CHECKIN
+        return self._PHASE_GONE
+
+    def _rooms_by_id(self) -> dict[int, RoomInfo]:
+        """Index the current room list by door_id for one-shot phase lookups."""
+        return {r.door_id: r for r in self.find_all_rooms()}
+
+    def _do_modify_access(
+        self,
+        grant_ref: str,
+        starts_at: datetime,
+        ends_at: datetime,
+        pin: str | None = None,
+    ) -> AccessGrant:
+        # Smartair's ModifyDate ops only move the *expiration*; the activation
+        # date is immutable. So when the requested start differs from what
+        # Smartair holds (e.g. a guest delays arrival, turning a live check-in
+        # back into a future pre-assignment), expiration-only modify cannot
+        # express it and we revoke + recreate the whole grant — reusing the PIN
+        # so the guest's credential is unchanged. A pure expiration change keeps
+        # the cheap in-place path below.
         ref = self._unpack_ref(grant_ref)
-        precheckin = ref["precheckin"]
-        for room in ref["rooms"]:
-            if precheckin:
+        rooms_by_id = self._rooms_by_id()
+        plan = [
+            (room, self._resolve_phase(rooms_by_id.get(int(room["lock_id"])), room, ref["precheckin"], pin))
+            for room in ref["rooms"]
+        ]
+        if any(
+            phase != self._PHASE_GONE
+            and self._activation_needs_recreate(phase, rooms_by_id.get(int(room["lock_id"])), room, starts_at)
+            for room, phase in plan
+        ):
+            return self._recreate(ref, starts_at, ends_at, pin)
+
+        for room, phase in plan:
+            room_id = int(room["lock_id"])
+            if phase == self._PHASE_PRECHECKIN:
+                # precheckinModifyDate needs BOTH roomId and preAssignationId
+                # (omitting roomId is rejected with ERROR_BAD_PARAMETERS).
                 self._call(
                     "guests",
                     "precheckinModifyDate",
+                    roomId=room_id,
                     preAssignationId=int(room["code_id"]),
                     dateExpiration=ends_at,
                 )
-            else:
+            elif phase == self._PHASE_CHECKIN:
                 self._call(
                     "guests",
                     "checkinModifyDate",
-                    roomId=int(room["lock_id"]),
+                    roomId=room_id,
                     dateExpiration=ends_at,
                 )
+            else:
+                raise LockNotFoundError(f"Grant no longer present on room {room_id}: nothing of ours to modify")
+        # PIN unchanged and Smartair never reads it back, so pin=None (contract
+        # convention): the caller keeps the PIN it got from grant_access.
         return AccessGrant(pin=None, ref=grant_ref, starts_at=starts_at, ends_at=ends_at)
 
-    def _do_revoke_access(self, grant_ref: str) -> bool:
+    def _activation_needs_recreate(
+        self,
+        phase: str,
+        info: RoomInfo | None,
+        room: dict,
+        starts_at: datetime,
+    ) -> bool:
+        """True when honouring ``starts_at`` requires moving the activation date.
+
+        Smartair cannot move an activation, so these cases force a recreate:
+
+        * start is now/past but the stay is still a pending pre-assignment
+          (it must be active now);
+        * start is in the future but the stay is already an active check-in
+          (it must activate later — the delayed-arrival case);
+        * start is in the future and the pending pre-assignment's activation no
+          longer matches it.
+
+        A future start whose pre-assignment already activates at that instant
+        needs no recreate. Neither does a now/past start on an already-active
+        check-in: the historical activation instant of a live check-in is
+        irrelevant (and Smartair forces it to "now" anyway), so comparing it
+        would otherwise loop on every modify.
+        """
+        desired_precheckin = starts_at > self._now()
+        if not desired_precheckin:
+            return phase == self._PHASE_PRECHECKIN
+        if phase == self._PHASE_CHECKIN:
+            return True
+        live = self._live_activation(phase, info, room)
+        return live is not None and not self._same_minute(live, starts_at)
+
+    def _live_activation(self, phase: str, info: RoomInfo | None, room: dict) -> datetime | None:
+        """The activation datetime Smartair currently holds for our stay, if known."""
+        if info is None:
+            return None
+        if phase == self._PHASE_PRECHECKIN:
+            pre_id = str(room["code_id"])
+            match = next((p for p in info.pre_assignations if str(p.pre_assignation_id) == pre_id), None)
+            return self._parse_dt(match.date_pre_activation) if match else None
+        if phase == self._PHASE_CHECKIN:
+            return self._parse_dt(info.date_activation)
+        return None
+
+    def _recreate(self, ref: dict, starts_at: datetime, ends_at: datetime, pin: str | None) -> AccessGrant:
+        """Revoke the current stay and grant a fresh one (new window, same PIN)."""
+        self._do_revoke_access(self._pack_ref(ref), pin)
+        lock_ids = [int(room["lock_id"]) for room in ref["rooms"]]
+        return self._do_grant_access(lock_ids, starts_at, ends_at, pin)
+
+    @staticmethod
+    def _parse_dt(value: Any) -> datetime | None:
+        """Parse a Smartair datetime into an aware datetime, or None if unusable."""
+        if not value:
+            return None
+        dt = value if isinstance(value, datetime) else None
+        if dt is None:
+            try:
+                dt = datetime.fromisoformat(str(value))
+            except ValueError:
+                return None
+        # Without a timezone we cannot compare reliably; treat as unknown.
+        return dt if dt.tzinfo is not None else None
+
+    @staticmethod
+    def _same_minute(a: datetime, b: datetime) -> bool:
+        """Compare two aware datetimes at minute precision in UTC (Smartair
+        stores activation to the minute)."""
+        au = a.astimezone(timezone.utc).replace(second=0, microsecond=0)
+        bu = b.astimezone(timezone.utc).replace(second=0, microsecond=0)
+        return au == bu
+
+    def _do_revoke_access(self, grant_ref: str, pin: str | None = None) -> bool:
         ref = self._unpack_ref(grant_ref)
-        precheckin = ref["precheckin"]
+        rooms_by_id = self._rooms_by_id()
         for room in ref["rooms"]:
-            # Idempotent: a stay already gone (room free / pre-assignment void)
-            # or a room that no longer exists still revokes without raising.
+            room_id = int(room["lock_id"])
+            phase = self._resolve_phase(rooms_by_id.get(room_id), room, ref["precheckin"], pin)
+            # Idempotent and safe: a stay that is no longer ours (cancelled,
+            # expired or taken over by another guest) needs no action and must
+            # not be cleared — that would revoke a stranger's access.
+            if phase == self._PHASE_GONE:
+                continue
             with contextlib.suppress(LockNotFoundError, LockAlreadyClearedError):
-                self._clear_stay(precheckin, room)
+                if phase == self._PHASE_PRECHECKIN:
+                    self._call("guests", "precheckinCancel", preAssignationId=int(room["code_id"]))
+                else:
+                    result = self._call("guests", "checkout", roomId=room_id)
+                    self._check_suboperations(result)
         return True
 
     def test_connection(self) -> bool:
@@ -465,6 +627,7 @@ class TesaSmartairProvider(BaseLockProvider):
                     date_expiration=str(getattr(door, "dateExpiration", "") or ""),
                     battery_status=str(battery_status) if battery_status else None,
                     battery_percentage=int(battery_pct) if battery_pct is not None else None,
+                    key_pad=str(getattr(door, "keyPad", "") or "") or None,
                     grants_occupied=grants_occupied,
                     pre_assignations=pre_assignations,
                 )

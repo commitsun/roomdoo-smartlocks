@@ -80,7 +80,13 @@ class BaseLockProvider(ABC):
         pin: str | None,
     ) -> AccessGrant: ...
 
-    def modify_access(self, grant_ref: str, starts_at: datetime, ends_at: datetime) -> AccessGrant:
+    def modify_access(
+        self,
+        grant_ref: str,
+        starts_at: datetime,
+        ends_at: datetime,
+        pin: str | None = None,
+    ) -> AccessGrant:
         """
         Modify the validity window of an existing grant.
 
@@ -95,6 +101,12 @@ class BaseLockProvider(ABC):
             grant_ref: Opaque ref returned by :meth:`grant_access`.
             starts_at: New start of validity (UTC).
             ends_at: New end of validity (UTC).
+            pin: The grant's known PIN, if the caller has it. Vendors whose
+                ``ref`` handle becomes stale (e.g. a TESA pre-assignment that
+                auto-activates into a check-in) use it to re-resolve the
+                current server-side state and confirm the credential is still
+                theirs before acting. Vendors that don't need it ignore it;
+                it is never stored in the ``ref``.
 
         Returns:
             AccessGrant with the resulting ref and either the new PIN or
@@ -107,12 +119,18 @@ class BaseLockProvider(ABC):
             LockOperationError: API rejected the operation.
         """
         self._validate_time_range(starts_at, ends_at)
-        return self._do_modify_access(grant_ref, starts_at, ends_at)
+        return self._do_modify_access(grant_ref, starts_at, ends_at, pin)
 
     @abstractmethod
-    def _do_modify_access(self, grant_ref: str, starts_at: datetime, ends_at: datetime) -> AccessGrant: ...
+    def _do_modify_access(
+        self,
+        grant_ref: str,
+        starts_at: datetime,
+        ends_at: datetime,
+        pin: str | None = None,
+    ) -> AccessGrant: ...
 
-    def revoke_access(self, grant_ref: str) -> bool:
+    def revoke_access(self, grant_ref: str, pin: str | None = None) -> bool:
         """
         Revoke an existing grant on every lock it covers.
 
@@ -121,6 +139,10 @@ class BaseLockProvider(ABC):
 
         Args:
             grant_ref: Opaque ref returned by :meth:`grant_access`.
+            pin: The grant's known PIN, if the caller has it. Used like in
+                :meth:`modify_access` to re-resolve stale handles and confirm
+                the credential is still ours before revoking, so we never
+                clear a stranger's access that took over the same lock.
 
         Returns:
             True if the grant is no longer functional after the call.
@@ -129,10 +151,10 @@ class BaseLockProvider(ABC):
             LockAuthError: Invalid credentials.
             LockConnectionError: API unreachable after retries.
         """
-        return self._do_revoke_access(grant_ref)
+        return self._do_revoke_access(grant_ref, pin)
 
     @abstractmethod
-    def _do_revoke_access(self, grant_ref: str) -> bool: ...
+    def _do_revoke_access(self, grant_ref: str, pin: str | None = None) -> bool: ...
 
     @abstractmethod
     def test_connection(self) -> bool:

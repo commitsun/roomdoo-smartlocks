@@ -257,19 +257,27 @@ class TTLockProvider(BaseLockProvider):
             ends_at=ends_at,
         )
 
-    def _do_modify_access(self, grant_ref: str, starts_at: datetime, ends_at: datetime) -> AccessGrant:
+    def _do_modify_access(
+        self,
+        grant_ref: str,
+        starts_at: datetime,
+        ends_at: datetime,
+        pin: str | None = None,
+    ) -> AccessGrant:
+        # pin is unused: TTLock keeps stable per-passcode handles in the ref and
+        # reads the credential back, so there is no stale-handle problem.
         targets = self._unpack_ref(grant_ref)
         # Best-effort, idempotent: re-applying the same window to a lock that
         # already has it is harmless, so a transient failure lets the caller
         # retry the whole modify without rollback.
         for target in targets:
             self._change_passcode(target["lockId"], target["keyboardPwdId"], starts_at, ends_at)
-        pin = ""
+        current_pin = ""
         if targets:
-            pin = self._read_pin(targets[0]["lockId"], targets[0]["keyboardPwdId"])
-        return AccessGrant(pin=pin, ref=grant_ref, starts_at=starts_at, ends_at=ends_at)
+            current_pin = self._read_pin(targets[0]["lockId"], targets[0]["keyboardPwdId"])
+        return AccessGrant(pin=current_pin, ref=grant_ref, starts_at=starts_at, ends_at=ends_at)
 
-    def _do_revoke_access(self, grant_ref: str) -> bool:
+    def _do_revoke_access(self, grant_ref: str, pin: str | None = None) -> bool:
         for target in self._unpack_ref(grant_ref):
             self._delete_passcode(target["lockId"], target["keyboardPwdId"])
         return True

@@ -199,7 +199,15 @@ class SaltoProvider(BaseLockProvider):
             ends_at=ends_at,
         )
 
-    def _do_modify_access(self, grant_ref: str, starts_at: datetime, ends_at: datetime) -> AccessGrant:
+    def _do_modify_access(
+        self,
+        grant_ref: str,
+        starts_at: datetime,
+        ends_at: datetime,
+        pin: str | None = None,
+    ) -> AccessGrant:
+        # pin is unused: Salto patches the user's time schedule in place, so the
+        # ref handle never goes stale.
         ref = self._unpack_ref(grant_ref)
         self._modify_time_schedule_in_access_group(ref["access_group_id"], ref["time_schedule_id"], starts_at, ends_at)
         # Only the time schedule moves; the user and PIN are untouched. Salto
@@ -209,7 +217,7 @@ class SaltoProvider(BaseLockProvider):
         # that original PIN valid.
         return AccessGrant(pin=None, ref=grant_ref, starts_at=starts_at, ends_at=ends_at)
 
-    def _do_revoke_access(self, grant_ref: str) -> bool:
+    def _do_revoke_access(self, grant_ref: str, pin: str | None = None) -> bool:
         """Make the grant non-functional by *suspending* the guest user.
 
         Salto licenses are billed per **subscribed** user, so revoking deletes
