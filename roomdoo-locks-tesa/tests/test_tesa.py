@@ -351,7 +351,8 @@ class TestModifyAccess(BaseProviderTest):
 
         self.assertEqual(grant.ref, ref)
         self.assertEqual(grant.ends_at, new_ends)
-        self.assertEqual(grant.pin, "")
+        # pin=None signals "unchanged" so the caller keeps the stored PIN.
+        self.assertIsNone(grant.pin)
         kwargs = self.mock_svc.checkinModifyDate.call_args.kwargs
         self.assertEqual(kwargs["roomId"], 81)
         self.assertEqual(kwargs["dateExpiration"], new_ends)

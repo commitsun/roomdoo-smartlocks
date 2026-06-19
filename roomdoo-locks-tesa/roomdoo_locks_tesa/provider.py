@@ -371,8 +371,10 @@ class TesaSmartairProvider(BaseLockProvider):
     def _do_modify_access(self, grant_ref: str, starts_at: datetime, ends_at: datetime) -> AccessGrant:
         # Smartair only allows modifying the expiration date, not the PIN or the
         # start date — so starts_at is echoed back unchanged and only ends_at is
-        # pushed. The PIN does not change; the caller keeps the one from
-        # grant_access (hence pin="" here).
+        # pushed. The PIN does not change and Smartair never reads it back, so
+        # we signal "unchanged" with pin=None (the contract's convention); the
+        # caller keeps the PIN it got from grant_access. Returning "" would be a
+        # real empty value and overwrite the stored PIN.
         ref = self._unpack_ref(grant_ref)
         precheckin = ref["precheckin"]
         for room in ref["rooms"]:
@@ -390,7 +392,7 @@ class TesaSmartairProvider(BaseLockProvider):
                     roomId=int(room["lock_id"]),
                     dateExpiration=ends_at,
                 )
-        return AccessGrant(pin="", ref=grant_ref, starts_at=starts_at, ends_at=ends_at)
+        return AccessGrant(pin=None, ref=grant_ref, starts_at=starts_at, ends_at=ends_at)
 
     def _do_revoke_access(self, grant_ref: str) -> bool:
         ref = self._unpack_ref(grant_ref)
