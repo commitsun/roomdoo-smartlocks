@@ -77,10 +77,10 @@ def make_door(
     )
 
 
-def make_pre(pre_id=299) -> SimpleNamespace:
+def make_pre(pre_id=299, date_pre_activation="2026-07-01T14:00:00") -> SimpleNamespace:
     return SimpleNamespace(
         preAssignationId=pre_id,
-        datePreActivation="2026-07-01T14:00:00",
+        datePreActivation=date_pre_activation,
         datePreExpiration="2026-07-05T11:00:00",
         grantsPreassigned=[],
     )
@@ -408,6 +408,77 @@ class TestModifyAccess(BaseProviderTest):
 
         self.mock_svc.precheckinModifyDate.assert_not_called()
         self.assertEqual(self.mock_svc.checkinModifyDate.call_args.kwargs["roomId"], 82)
+
+    def test_modify_delayed_arrival_recreates_as_precheckin(self):
+        # The corner case: a live check-in whose arrival is pushed to the
+        # future must become a pre-assignment. ModifyDate can't move the
+        # activation, so modify revokes (checkout) and recreates (precheckin)
+        # reusing the PIN.
+        self.mock_svc.findAllRooms.return_value = ok_result(
+            doorData=[make_door(door_id=81, occupied=True, key_pad="4321")]
+        )
+        self.mock_svc.checkout.return_value = ok_result()
+        self.mock_svc.precheckin.return_value = ok_result(preAssignationId=777)
+        ref = self._ref(False, [{"lock_id": "81", "code_id": "81"}])
+        _, ends = future_window()
+        starts = ends - timedelta(hours=2)  # start in the future
+
+        grant = self.provider.modify_access(ref, starts, ends, pin="4321")
+
+        self.mock_svc.checkinModifyDate.assert_not_called()
+        self.mock_svc.checkout.assert_called_once()
+        self.assertEqual(self.mock_svc.checkout.call_args.kwargs["roomId"], 81)
+        self.assertEqual(self.mock_svc.precheckin.call_args.kwargs["guestData"]["keyPad"], "4321")
+        self.assertEqual(grant.pin, "4321")  # PIN reused
+        new_ref = TesaSmartairProvider._unpack_ref(grant.ref)
+        self.assertTrue(new_ref["precheckin"])
+        self.assertEqual(new_ref["rooms"], [{"lock_id": "81", "code_id": "777"}])
+
+    def test_modify_precheckin_activation_moved_recreates(self):
+        # A pending pre-assignment whose activation no longer matches the new
+        # start is recreated (cancel + fresh precheckin), not date-modified.
+        self.mock_svc.findAllRooms.return_value = ok_result(
+            doorData=[
+                make_door(
+                    door_id=82,
+                    preassigned=True,
+                    pre_assignations=[make_pre(299, date_pre_activation="2030-01-01T00:00:00+00:00")],
+                )
+            ]
+        )
+        self.mock_svc.precheckinCancel.return_value = ok_result()
+        self.mock_svc.precheckin.return_value = ok_result(preAssignationId=888)
+        ref = self._ref(True, [{"lock_id": "82", "code_id": "299"}])
+        starts, ends = future_window()
+
+        grant = self.provider.modify_access(ref, starts, ends, pin="5555")
+
+        self.mock_svc.precheckinModifyDate.assert_not_called()
+        self.assertEqual(self.mock_svc.precheckinCancel.call_args.kwargs["preAssignationId"], 299)
+        new_ref = TesaSmartairProvider._unpack_ref(grant.ref)
+        self.assertEqual(new_ref["rooms"], [{"lock_id": "82", "code_id": "888"}])
+
+    def test_modify_precheckin_same_activation_no_recreate(self):
+        # Activation unchanged (only the expiration moves) → cheap in-place
+        # precheckinModifyDate, no recreate.
+        starts, ends = future_window()
+        self.mock_svc.findAllRooms.return_value = ok_result(
+            doorData=[
+                make_door(
+                    door_id=82,
+                    preassigned=True,
+                    pre_assignations=[make_pre(299, date_pre_activation=starts.isoformat())],
+                )
+            ]
+        )
+        self.mock_svc.precheckinModifyDate.return_value = ok_result()
+        ref = self._ref(True, [{"lock_id": "82", "code_id": "299"}])
+
+        self.provider.modify_access(ref, starts, ends + timedelta(hours=6), pin="5555")
+
+        self.mock_svc.precheckinCancel.assert_not_called()
+        self.mock_svc.precheckin.assert_not_called()
+        self.mock_svc.precheckinModifyDate.assert_called_once()
 
     def test_modify_raises_when_grant_gone(self):
         # Room occupied by a different PIN (someone else took it over) → not
