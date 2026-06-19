@@ -143,3 +143,23 @@ def test_grant_access_rejects_bad_window(window):
     starts_at, ends_at = window
     with pytest.raises(ValueError):
         provider.grant_access([LOCK_A], ends_at, starts_at)
+
+
+@responses.activate
+def test_list_locks_maps_id_and_name():
+    provider = make_provider()
+    responses.get(
+        "https://api.rentandpass.com/api/lock/list",
+        json={
+            "total": 2,
+            "pages": 1,
+            "list": [
+                {"lockId": 31812694, "lockAlias": "PUERTA CORUÑA Puerta Principal"},
+                {"lockId": 31812695, "lockAlias": "Room 101"},
+            ],
+        },
+    )
+    assert provider.list_locks() == [
+        {"id": "31812694", "name": "PUERTA CORUÑA Puerta Principal"},
+        {"id": "31812695", "name": "Room 101"},
+    ]

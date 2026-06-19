@@ -279,6 +279,31 @@ class SaltoProvider(BaseLockProvider):
             for role in self._get_roles_from_site()
         ]
 
+    def list_locks(self) -> list:
+        """Return the site's locks as ``[{"id": ..., "name": ...}, ...]``.
+
+        Lets an operator read the lock id to configure on a room. Lock ids are
+        per-site UUIDs, so they must be discovered rather than hardcoded. The
+        readable label is the lock's ``customer_reference`` (as for roles); the
+        lock object has no plain ``name`` field."""
+        return [{"id": lock.get("id"), "name": lock.get("customer_reference")} for lock in self._get_locks_from_site()]
+
+    # ── get_locks_from_site ──────────────────────────────────────────────────
+
+    def _get_locks_from_site(self) -> list:
+        try:
+            response = requests.get(
+                f"{self.API_HOSTS[self.env]}/v1.2/sites/{self.siteId}/locks",
+                headers={"Authorization": "Bearer " + self.accessToken},
+            )
+            self._handle_response(response)
+            body = response.json()
+            if "items" not in body:
+                raise LockOperationError("API did not return any Locks")
+            return cast("list", body["items"])
+        except requests.exceptions.ConnectionError as err:
+            raise LockConnectionError("Unable to connect to Salto API") from err
+
     # ── get_access_groups_from_site ──────────────────────────────────────────
 
     def _get_access_groups_from_site(self) -> list:

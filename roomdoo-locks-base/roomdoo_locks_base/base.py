@@ -169,3 +169,27 @@ class BaseLockProvider(ABC):
             LockConnectionError: API unreachable after retries.
         """
         ...
+
+    def list_locks(self) -> list[dict]:
+        """
+        List the locks/doors known to this vendor account.
+
+        A convenience for operators configuring rooms: it surfaces each lock's
+        vendor-side identifier next to its human-readable name, so the id to
+        store on a room can be read off without digging through the vendor
+        backend.
+
+        Not part of the core access-grant flow, so it is optional: vendors that
+        expose a listing override it; the default raises
+        :class:`NotImplementedError` and callers are expected to handle that.
+
+        Returns:
+            One dict per lock with at least ``id`` (vendor identifier, as str)
+            and ``name`` (human-readable label).
+
+        Raises:
+            NotImplementedError: The vendor adapter does not implement listing.
+            LockAuthError: Invalid credentials.
+            LockConnectionError: API unreachable after retries.
+        """
+        raise NotImplementedError("This vendor does not support listing locks.")

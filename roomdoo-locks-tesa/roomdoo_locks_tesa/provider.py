@@ -575,6 +575,15 @@ class TesaSmartairProvider(BaseLockProvider):
     # Room listing  (analogous to a lock list/detail)
     # ------------------------------------------------------------------
 
+    def list_locks(self) -> list[dict]:
+        """Locks as ``[{"id": door_id, "name": door_name}, ...]``.
+
+        TESA addresses doors by an internal ``door_id`` that is *not* the room
+        number and is hidden in the Smartair UI, so this is how an operator
+        discovers the id to configure on a room.
+        """
+        return [{"id": str(room.door_id), "name": room.door_name} for room in self.find_all_rooms()]
+
     def find_all_rooms(self) -> list[RoomInfo]:
         """All rooms with current state (occupied / preassigned / free)."""
         result = self._call("guests", "findAllRooms")

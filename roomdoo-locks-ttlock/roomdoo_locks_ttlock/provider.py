@@ -301,6 +301,21 @@ class TTLockProvider(BaseLockProvider):
             },
         )
 
+    def list_locks(self) -> list[dict]:
+        """Locks as ``[{"id": lockId, "name": lockAlias}, ...]``, all pages."""
+        locks: list[dict] = []
+        page_no = 1
+        page_size = 100
+        while True:
+            data = self.get_lock_list(pageNo=page_no, pageSize=page_size)
+            for lock in data.get("list") or []:
+                locks.append({"id": str(lock.get("lockId")), "name": lock.get("lockAlias") or ""})
+            # TTLock paginates: stop once the last page has been consumed.
+            if page_no >= (data.get("pages") or 1):
+                break
+            page_no += 1
+        return locks
+
     def get_lock_list(
         self,
         pageNo: int = 1,

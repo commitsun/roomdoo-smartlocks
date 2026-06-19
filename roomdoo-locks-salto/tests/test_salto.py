@@ -663,3 +663,24 @@ def test_server_error_on_add_user():
     )
     with pytest.raises(LockConnectionError):
         provider._add_user_to_site("Roomdoo", "Guest", ROLE_ID, "")
+
+
+@responses.activate
+def test_list_locks_maps_id_and_customer_reference():
+    # The lock object has no plain "name"; its readable label is
+    # customer_reference (as for roles). Verified against the live Salto KS API.
+    mock_auth()
+    provider = make_provider()
+    responses.get(
+        f"{API_BASE_ACC}/v1.2/sites/{SITE_ID}/locks",
+        json={
+            "items": [
+                {"id": "lock-uuid-1", "customer_reference": "Cerradura 101"},
+                {"id": "lock-uuid-2", "customer_reference": "Cerradura 102"},
+            ]
+        },
+    )
+    assert provider.list_locks() == [
+        {"id": "lock-uuid-1", "name": "Cerradura 101"},
+        {"id": "lock-uuid-2", "name": "Cerradura 102"},
+    ]

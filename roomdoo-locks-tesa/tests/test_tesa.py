@@ -637,6 +637,14 @@ class TestRoomListing(BaseProviderTest):
         self.mock_svc.findAllRooms.return_value = ok_result(doorData=[])
         self.assertIsNone(self.provider.get_room_info(999))
 
+    def test_list_locks_maps_door_id_and_name(self):
+        doors = [make_door(door_id=31, door_name="101"), make_door(door_id=32, door_name="102")]
+        self.mock_svc.findAllRooms.return_value = ok_result(doorData=doors)
+        self.assertEqual(
+            self.provider.list_locks(),
+            [{"id": "31", "name": "101"}, {"id": "32", "name": "102"}],
+        )
+
 
 # ---------------------------------------------------------------------------
 # Extras: staff PIN user / open door / modify grants
