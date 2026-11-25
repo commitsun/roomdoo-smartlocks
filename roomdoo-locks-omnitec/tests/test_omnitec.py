@@ -1,10 +1,11 @@
 import json
 from datetime import datetime, timedelta, timezone
+from urllib.parse import parse_qs, urlparse
 
 import pytest
 import responses
-from roomdoo_locks_base.exceptions import LockAuthError, LockOfflineError
-from roomdoo_locks_omnitec import OmnitecProvider
+from roomdoo_locks_base.exceptions import LockAuthError, LockOfflineError, LockOperationError
+from roomdoo_locks_omnitec import GatewayCommandError, OmnitecProvider
 
 CLIENT_ID = "fake_client_id"
 CLIENT_SECRET = "fake_client_secret"
@@ -119,6 +120,20 @@ def test_modify_access_returns_pin(window):
 
 
 @responses.activate
+def test_modify_access_reaches_every_lock_through_the_gateway(window):
+    provider = make_provider()
+    starts_at, ends_at = window
+    ref = json.dumps([{"ID": LOCK_A, "passID": "111"}, {"ID": LOCK_B, "passID": "222"}])
+    responses.put(CHANGE_URL, json={"errcode": 0})
+    responses.get(LIST_URL, json={"list": [{"keyboardPwdId": 111, "keyboardPwd": "135790"}]})
+
+    provider.modify_access(ref, starts_at, ends_at + timedelta(days=1))
+
+    changes = calls("PUT", CHANGE_URL)
+    assert [(query(c)["ID"], query(c)["type"]) for c in changes] == [(LOCK_A, "2"), (LOCK_B, "2")]
+
+
+@responses.activate
 def test_revoke_access_deletes_every_lock():
     provider = make_provider()
     ref = json.dumps([{"ID": LOCK_A, "passID": "111"}, {"ID": LOCK_B, "passID": "222"}])
@@ -163,3 +178,234 @@ def test_list_locks_maps_id_and_name():
         {"id": "31812694", "name": "PUERTA CORUÑA Puerta Principal"},
         {"id": "31812695", "name": "Room 101"},
     ]
+
+
+@responses.activate
+def test_list_locks_reads_every_page():
+    provider = make_provider()
+    lock_list_url = "https://api.rentandpass.com/api/lock/list"
+    responses.get(lock_list_url, json={"pages": 2, "list": [{"lockId": n, "lockAlias": ""} for n in range(200)]})
+    responses.get(lock_list_url, json={"pages": 2, "list": [{"lockId": 31812694, "lockAlias": "Room 101"}]})
+
+    locks = provider.list_locks()
+
+    assert len(locks) == 201
+    assert locks[-1] == {"id": "31812694", "name": "Room 101"}
+
+
+@responses.activate
+def test_errors_carry_the_vendor_reason(window):
+    provider = make_provider()
+    starts_at, ends_at = window
+    responses.post(
+        ADD_URL,
+        json={"errcode": -3007, "errmsg": "The same passcode already exists.", "description": "An error has ocurred"},
+    )
+
+    with pytest.raises(LockOperationError, match=r"\[-3007\]: The same passcode already exists"):
+        provider.grant_access([LOCK_A], starts_at, ends_at)
+
+
+# ── errcode -1 and gateway diagnostics ────────────────────────────────────
+
+GATEWAYS_URL = "https://api.rentandpass.com/api/gateway/listByLock"  # GET
+TAG = "F2600001#17"
+FAILED_COMMAND = {"errcode": -1, "description": "An error has ocurred"}
+
+
+def query(call):
+    """Query params of a recorded request, single values unwrapped."""
+    return {k: v[0] for k, v in parse_qs(urlparse(call.request.url).query).items()}
+
+
+def calls(method, url):
+    return [c for c in responses.calls if c.request.method == method and c.request.url.startswith(url)]
+
+
+@responses.activate
+def test_minus_one_is_transient_and_reports_the_gateways(window):
+    provider = make_provider()
+    starts_at, ends_at = window
+    responses.post(ADD_URL, json=FAILED_COMMAND)
+    responses.get(
+        GATEWAYS_URL,
+        json={
+            "list": [
+                {"gatewayId": 1, "gatewayName": "Gateway A", "rssi": -70, "rssiUpdateDate": 1767225600000},
+                {"gatewayId": 2, "gatewayName": "Gateway B", "rssi": -95, "rssiUpdateDate": 1767225660000},
+            ]
+        },
+    )
+
+    with pytest.raises(GatewayCommandError) as err:
+        provider.grant_access([LOCK_A], starts_at, ends_at)
+
+    assert isinstance(err.value, LockOfflineError)
+    message = str(err.value)
+    assert "[-1]: An error has ocurred" in message
+    assert "Gateway A rssi -70 (2026-01-01 00:00 UTC)" in message
+    assert "Gateway B rssi -95" in message
+    assert query(calls("GET", GATEWAYS_URL)[0])["ID"] == LOCK_A
+
+
+@responses.activate
+def test_minus_one_without_gateway(window):
+    provider = make_provider()
+    starts_at, ends_at = window
+    responses.post(ADD_URL, json=FAILED_COMMAND)
+    responses.get(GATEWAYS_URL, json={"list": []})
+
+    with pytest.raises(GatewayCommandError, match="lock linked to no gateway"):
+        provider.grant_access([LOCK_A], starts_at, ends_at)
+
+
+@responses.activate
+def test_gateway_diagnostics_never_hide_the_error():
+    provider = make_provider()
+    ref = json.dumps([{"ID": LOCK_A, "passID": "111"}])
+    responses.delete(DELETE_URL, json=FAILED_COMMAND)
+    responses.get(GATEWAYS_URL, status=500)
+
+    with pytest.raises(GatewayCommandError, match="gateway diagnostics unavailable"):
+        provider.revoke_access(ref)
+
+
+# ── Resumable (tagged) grants ─────────────────────────────────────────────
+
+
+def make_tagged_provider():
+    mock_auth()
+    return OmnitecProvider(CLIENT_ID, CLIENT_SECRET, USERNAME, PASSWORD, passcode_tag=TAG)
+
+
+def tagged(pass_id, pin):
+    return {"keyboardPwdId": pass_id, "keyboardPwd": pin, "keyboardPwdName": TAG}
+
+
+@responses.activate
+def test_tagged_grant_names_every_passcode(window):
+    provider = make_tagged_provider()
+    starts_at, ends_at = window
+    responses.get(LIST_URL, json={"list": []})
+    responses.get(LIST_URL, json={"list": []})
+    responses.post(ADD_URL, json={"keyboardPwdId": 111})
+    responses.post(ADD_URL, json={"keyboardPwdId": 222})
+
+    grant = provider.grant_access([LOCK_A, LOCK_B], starts_at, ends_at)
+
+    adds = calls("POST", ADD_URL)
+    assert [query(c)["name"] for c in adds] == [TAG, TAG]
+    assert {query(c)["password"] for c in adds} == {grant.pin}
+
+
+@responses.activate
+def test_tagged_grant_keeps_programmed_locks_on_failure(window):
+    provider = make_tagged_provider()
+    starts_at, ends_at = window
+    responses.get(LIST_URL, json={"list": []})
+    responses.get(LIST_URL, json={"list": []})
+    responses.post(ADD_URL, json={"keyboardPwdId": 111})
+    responses.post(ADD_URL, json=FAILED_COMMAND)
+    responses.get(GATEWAYS_URL, json={"list": []})
+
+    with pytest.raises(GatewayCommandError):
+        provider.grant_access([LOCK_A, LOCK_B], starts_at, ends_at)
+
+    assert calls("DELETE", DELETE_URL) == []
+
+
+@responses.activate
+def test_tagged_grant_resumes_a_previous_attempt(window):
+    provider = make_tagged_provider()
+    starts_at, ends_at = window
+    # Lock A was programmed by the interrupted attempt; lock B was not, and
+    # holds an unrelated passcode that must be left alone.
+    responses.get(LIST_URL, json={"list": [tagged(111, "4721")]})
+    responses.get(LIST_URL, json={"list": [{"keyboardPwdId": 999, "keyboardPwd": "4721", "keyboardPwdName": ""}]})
+    responses.post(ADD_URL, json={"keyboardPwdId": 222})
+
+    grant = provider.grant_access([LOCK_A, LOCK_B], starts_at, ends_at)
+
+    assert grant.pin == "4721"
+    assert json.loads(grant.ref) == [{"ID": LOCK_A, "passID": "111"}, {"ID": LOCK_B, "passID": "222"}]
+    adds = calls("POST", ADD_URL)
+    assert len(adds) == 1
+    assert query(adds[0])["ID"] == LOCK_B
+    assert query(adds[0])["password"] == "4721"
+    assert calls("DELETE", DELETE_URL) == []
+
+
+@responses.activate
+def test_tagged_grant_resumes_from_any_page(window):
+    provider = make_tagged_provider()
+    starts_at, ends_at = window
+    full_page = [{"keyboardPwdId": n, "keyboardPwd": "1234", "keyboardPwdName": "Reception"} for n in range(200)]
+    responses.get(LIST_URL, json={"list": full_page, "pages": 2})
+    responses.get(LIST_URL, json={"list": [tagged(111, "4721")], "pages": 2})
+
+    grant = provider.grant_access([LOCK_A], starts_at, ends_at)
+
+    assert grant.pin == "4721"
+    assert calls("POST", ADD_URL) == []
+    pages = [(query(c)["firstPage"], query(c)["itemsPerPage"]) for c in calls("GET", LIST_URL)]
+    assert pages == [("1", "200"), ("2", "200")]
+
+
+@responses.activate
+def test_tagged_grant_completed_by_lost_response_adds_nothing(window):
+    provider = make_tagged_provider()
+    starts_at, ends_at = window
+    # Errcode -1 on lock B, yet the passcode was applied: both are listed.
+    responses.get(LIST_URL, json={"list": [tagged(111, "4721")]})
+    responses.get(LIST_URL, json={"list": [tagged(222, "4721")]})
+
+    grant = provider.grant_access([LOCK_A, LOCK_B], starts_at, ends_at)
+
+    assert grant.pin == "4721"
+    assert json.loads(grant.ref) == [{"ID": LOCK_A, "passID": "111"}, {"ID": LOCK_B, "passID": "222"}]
+    assert calls("POST", ADD_URL) == []
+
+
+@responses.activate
+def test_tagged_grant_drops_tagged_passcodes_under_another_pin(window):
+    provider = make_tagged_provider()
+    starts_at, ends_at = window
+    responses.get(LIST_URL, json={"list": [tagged(111, "4721")]})
+    responses.get(LIST_URL, json={"list": [tagged(333, "9135")]})
+    responses.delete(DELETE_URL, json={"errcode": 0})
+    responses.post(ADD_URL, json={"keyboardPwdId": 222})
+
+    grant = provider.grant_access([LOCK_A, LOCK_B], starts_at, ends_at)
+
+    assert grant.pin == "4721"
+    deletes = calls("DELETE", DELETE_URL)
+    assert [(query(c)["ID"], query(c)["passID"]) for c in deletes] == [(LOCK_B, "333")]
+    assert query(calls("POST", ADD_URL)[0])["password"] == "4721"
+
+
+@responses.activate
+def test_delete_tagged_passcodes_only_deletes_the_tag():
+    provider = make_provider()
+    responses.get(
+        LIST_URL,
+        json={
+            "list": [
+                tagged(111, "4721"),
+                {"keyboardPwdId": 888, "keyboardPwd": "1234"},
+                {"keyboardPwdId": 999, "keyboardPwd": "5678", "keyboardPwdName": "Reception"},
+            ]
+        },
+    )
+    responses.get(LIST_URL, json={"list": [tagged(222, "4721")]})
+    responses.delete(DELETE_URL, json={"errcode": 0})
+
+    assert provider.delete_tagged_passcodes([LOCK_A, LOCK_B], TAG) == 2
+    deletes = calls("DELETE", DELETE_URL)
+    assert [(query(c)["ID"], query(c)["passID"]) for c in deletes] == [(LOCK_A, "111"), (LOCK_B, "222")]
+
+
+@responses.activate
+def test_delete_tagged_passcodes_requires_a_tag():
+    provider = make_provider()
+    with pytest.raises(ValueError):
+        provider.delete_tagged_passcodes([LOCK_A], "")
