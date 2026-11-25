@@ -4,7 +4,7 @@ from urllib.parse import parse_qs, urlparse
 
 import pytest
 import responses
-from roomdoo_locks_base.exceptions import LockAuthError, LockOfflineError
+from roomdoo_locks_base.exceptions import LockAuthError, LockOfflineError, LockOperationError
 from roomdoo_locks_omnitec import GatewayCommandError, OmnitecProvider
 
 CLIENT_ID = "fake_client_id"
@@ -191,6 +191,19 @@ def test_list_locks_reads_every_page():
 
     assert len(locks) == 201
     assert locks[-1] == {"id": "31812694", "name": "Room 101"}
+
+
+@responses.activate
+def test_errors_carry_the_vendor_reason(window):
+    provider = make_provider()
+    starts_at, ends_at = window
+    responses.post(
+        ADD_URL,
+        json={"errcode": -3007, "errmsg": "The same passcode already exists.", "description": "An error has ocurred"},
+    )
+
+    with pytest.raises(LockOperationError, match=r"\[-3007\]: The same passcode already exists"):
+        provider.grant_access([LOCK_A], starts_at, ends_at)
 
 
 # ── errcode -1 and gateway diagnostics ────────────────────────────────────

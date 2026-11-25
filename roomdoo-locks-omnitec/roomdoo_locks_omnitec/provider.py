@@ -138,47 +138,49 @@ class OmnitecProvider(BaseLockProvider):
             raise LockAPIError("Invalid response from Omnitec API") from err
 
         errcode = body.get("errcode")
-        description = body.get("description", "Unknown error")
+        # ``description`` is generic ("An error has ocurred"); the vendor's
+        # reason comes in ``errmsg``, when there is one (not on -1).
+        reason = body.get("errmsg") or body.get("description") or "Unknown error"
         if errcode is not None and errcode != 0:
             if errcode == -1:
-                raise GatewayCommandError(f"Lock did not complete the gateway command [{errcode}]: {description}")
+                raise GatewayCommandError(f"Lock did not complete the gateway command [{errcode}]: {reason}")
             if errcode == -1003:
-                raise LockNotFoundError(f"Lock not found [{errcode}]: {description}")
+                raise LockNotFoundError(f"Lock not found [{errcode}]: {reason}")
             if errcode == -1007:
-                raise LockNotFoundError(f"No password data for this lock [{errcode}]: {description}")
+                raise LockNotFoundError(f"No password data for this lock [{errcode}]: {reason}")
             if errcode == -1008:
-                raise LockNotFoundError(f"eKey not found [{errcode}]: {description}")
+                raise LockNotFoundError(f"eKey not found [{errcode}]: {reason}")
             if errcode in (-3, -2018, 20002, 30002):
-                raise LockNoPermissionError(f"Permission error [{errcode}]: {description}")
+                raise LockNoPermissionError(f"Permission error [{errcode}]: {reason}")
             if errcode == -2009:
-                raise LockNoPermissionError(f"Invalid password id [{errcode}]: {description}")
+                raise LockNoPermissionError(f"Invalid password id [{errcode}]: {reason}")
             if errcode == -2012:
-                raise LockOfflineError(f"Lock not connected to gateway [{errcode}]: {description}")
+                raise LockOfflineError(f"Lock not connected to gateway [{errcode}]: {reason}")
             if errcode == -2025:
-                raise LockOperationError(f"Lock is frozen [{errcode}]: {description}")
+                raise LockOperationError(f"Lock is frozen [{errcode}]: {reason}")
             if errcode in (-3002, -3003):
-                raise LockOfflineError(f"Gateway error [{errcode}]: {description}")
+                raise LockOfflineError(f"Gateway error [{errcode}]: {reason}")
             if errcode == -3036:
-                raise LockOfflineError(f"Lock is offline [{errcode}]: {description}")
+                raise LockOfflineError(f"Lock is offline [{errcode}]: {reason}")
             if errcode == -3037:
-                raise LockOfflineError(f"Lock is busy [{errcode}]: {description}")
+                raise LockOfflineError(f"Lock is busy [{errcode}]: {reason}")
             if errcode == -4043:
-                raise LockOperationError(f"Function not supported [{errcode}]: {description}")
+                raise LockOperationError(f"Function not supported [{errcode}]: {reason}")
             if errcode == 10001:
-                raise LockAuthError(f"Invalid client [{errcode}]: {description}")
+                raise LockAuthError(f"Invalid client [{errcode}]: {reason}")
             if errcode == 10003:
-                raise LockAuthError(f"Invalid token [{errcode}]: {description}")
+                raise LockAuthError(f"Invalid token [{errcode}]: {reason}")
             if errcode == 10011:
-                raise LockAuthError(f"Invalid refresh token [{errcode}]: {description}")
+                raise LockAuthError(f"Invalid refresh token [{errcode}]: {reason}")
             if errcode == 20003:
-                raise LockNoPermissionError(f"Invalid key [{errcode}]: {description}")
+                raise LockNoPermissionError(f"Invalid key [{errcode}]: {reason}")
             if errcode == 20009:
-                raise LockNoPermissionError(f"Invalid lock id [{errcode}]: {description}")
+                raise LockNoPermissionError(f"Invalid lock id [{errcode}]: {reason}")
             if errcode == 30001:
-                raise LockNoPermissionError(f"Do not have permission [{errcode}]: {description}")
+                raise LockNoPermissionError(f"Do not have permission [{errcode}]: {reason}")
             if errcode == 90000:
-                raise LockConnectionError(f"Internal server error [{errcode}]: {description}")
-            raise LockOperationError(f"Operation error [{errcode}]: {description}")
+                raise LockConnectionError(f"Internal server error [{errcode}]: {reason}")
+            raise LockOperationError(f"Operation error [{errcode}]: {reason}")
         return cast("dict", body)
 
     def _to_ms(self, dt: datetime) -> int:
