@@ -180,6 +180,19 @@ def test_list_locks_maps_id_and_name():
     ]
 
 
+@responses.activate
+def test_list_locks_reads_every_page():
+    provider = make_provider()
+    lock_list_url = "https://api.rentandpass.com/api/lock/list"
+    responses.get(lock_list_url, json={"pages": 2, "list": [{"lockId": n, "lockAlias": ""} for n in range(200)]})
+    responses.get(lock_list_url, json={"pages": 2, "list": [{"lockId": 31812694, "lockAlias": "Room 101"}]})
+
+    locks = provider.list_locks()
+
+    assert len(locks) == 201
+    assert locks[-1] == {"id": "31812694", "name": "Room 101"}
+
+
 # ── errcode -1 and gateway diagnostics ────────────────────────────────────
 
 GATEWAYS_URL = "https://api.rentandpass.com/api/gateway/listByLock"  # GET
@@ -270,8 +283,6 @@ def test_tagged_grant_names_every_passcode(window):
     adds = calls("POST", ADD_URL)
     assert [query(c)["name"] for c in adds] == [TAG, TAG]
     assert {query(c)["password"] for c in adds} == {grant.pin}
-    # The whole listing is read, not the first page of 20.
-    assert all(query(c)["itemsPerPage"] == "999" for c in calls("GET", LIST_URL))
 
 
 @responses.activate
@@ -309,6 +320,22 @@ def test_tagged_grant_resumes_a_previous_attempt(window):
     assert query(adds[0])["ID"] == LOCK_B
     assert query(adds[0])["password"] == "4721"
     assert calls("DELETE", DELETE_URL) == []
+
+
+@responses.activate
+def test_tagged_grant_resumes_from_any_page(window):
+    provider = make_tagged_provider()
+    starts_at, ends_at = window
+    full_page = [{"keyboardPwdId": n, "keyboardPwd": "1234", "keyboardPwdName": "Reception"} for n in range(200)]
+    responses.get(LIST_URL, json={"list": full_page, "pages": 2})
+    responses.get(LIST_URL, json={"list": [tagged(111, "4721")], "pages": 2})
+
+    grant = provider.grant_access([LOCK_A], starts_at, ends_at)
+
+    assert grant.pin == "4721"
+    assert calls("POST", ADD_URL) == []
+    pages = [(query(c)["firstPage"], query(c)["itemsPerPage"]) for c in calls("GET", LIST_URL)]
+    assert pages == [("1", "200"), ("2", "200")]
 
 
 @responses.activate

@@ -16,9 +16,8 @@ from roomdoo_locks_base.exceptions import (
     LockOperationError,
 )
 
-# Rent&Pass paginates listings at 20 items by default and documents no maximum.
-# One page this size pulls everything a lock or an account holds.
-_LIST_PAGE_SIZE = 999
+# Rent&Pass serves at most 200 items per page, whatever ``itemsPerPage`` asks.
+_LIST_PAGE_SIZE = 200
 
 
 class GatewayCommandError(LockOfflineError):
@@ -228,9 +227,19 @@ class OmnitecProvider(BaseLockProvider):
             return "no date"
         return datetime.fromtimestamp(value / 1000, tz=timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
+    def _list_all(self, path: str, extra: dict) -> list:
+        """Every item of a paginated listing, read page by page."""
+        items: list = []
+        page = 1
+        while True:
+            body = self._request("GET", path, {**extra, "firstPage": page, "itemsPerPage": _LIST_PAGE_SIZE})
+            items.extend(body.get("list") or [])
+            if page >= (body.get("pages") or 1):
+                return items
+            page += 1
+
     def _get_lock_passwords(self, lock_id: str) -> list:
-        body = self._request("GET", "/lock/passwords", {"ID": lock_id, "itemsPerPage": _LIST_PAGE_SIZE})
-        return cast("list", body.get("list", []))
+        return self._list_all("/lock/passwords", {"ID": lock_id})
 
     def _find_tagged(self, lock_id: str, tag: str) -> list:
         """Passcodes of ``lock_id`` created under the name ``tag``."""
@@ -380,12 +389,13 @@ class OmnitecProvider(BaseLockProvider):
         """Locks as ``[{"id": lockId, "name": lockAlias}, ...]``.
 
         ``GET /lock/list`` returns a TTLock-shaped payload
-        (``{"list": [{"lockId", "lockAlias", ...}], "pages", "total"}``).
-        A single high ``itemsPerPage`` pulls every lock — an account holds a
-        few hundred at most — as the field-tested listing script does.
+        (``{"list": [{"lockId", "lockAlias", ...}], "pages", "total"}``),
+        read page by page: an account can hold more locks than one page.
         """
-        body = self._request("GET", "/lock/list", {"itemsPerPage": _LIST_PAGE_SIZE})
-        return [{"id": str(lock.get("lockId")), "name": lock.get("lockAlias") or ""} for lock in body.get("list") or []]
+        return [
+            {"id": str(lock.get("lockId")), "name": lock.get("lockAlias") or ""}
+            for lock in self._list_all("/lock/list", {})
+        ]
 
     def delete_tagged_passcodes(self, lock_ids: list, tag: str) -> int:
         """Delete every passcode named ``tag`` on ``lock_ids`` and return how
