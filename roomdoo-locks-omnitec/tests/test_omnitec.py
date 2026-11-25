@@ -120,6 +120,20 @@ def test_modify_access_returns_pin(window):
 
 
 @responses.activate
+def test_modify_access_reaches_every_lock_through_the_gateway(window):
+    provider = make_provider()
+    starts_at, ends_at = window
+    ref = json.dumps([{"ID": LOCK_A, "passID": "111"}, {"ID": LOCK_B, "passID": "222"}])
+    responses.put(CHANGE_URL, json={"errcode": 0})
+    responses.get(LIST_URL, json={"list": [{"keyboardPwdId": 111, "keyboardPwd": "135790"}]})
+
+    provider.modify_access(ref, starts_at, ends_at + timedelta(days=1))
+
+    changes = calls("PUT", CHANGE_URL)
+    assert [(query(c)["ID"], query(c)["type"]) for c in changes] == [(LOCK_A, "2"), (LOCK_B, "2")]
+
+
+@responses.activate
 def test_revoke_access_deletes_every_lock():
     provider = make_provider()
     ref = json.dumps([{"ID": LOCK_A, "passID": "111"}, {"ID": LOCK_B, "passID": "222"}])

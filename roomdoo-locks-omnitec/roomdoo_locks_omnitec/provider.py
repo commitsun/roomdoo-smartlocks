@@ -44,7 +44,7 @@ class OmnitecProvider(BaseLockProvider):
     (e.g. it documents ``POST /password/add`` returning ``{"success": true}``
     while the working call is ``POST /password`` returning ``keyboardPwdId``):
       POST   /password         add a passcode  -> body has keyboardPwdId
-      PUT    /password         change a passcode (``type=1``)
+      PUT    /password         change a passcode (``type=2``)
       DELETE /password         remove a passcode (``type=2``)
       GET    /lock/passwords   list a lock's passcodes
     All sent as query params with epoch-ms dates, as in the tested code.
@@ -270,15 +270,16 @@ class OmnitecProvider(BaseLockProvider):
 
     def _change_passcode(self, lock_id: str, pass_id: str, starts_at: datetime, ends_at: datetime) -> None:
         # ``password`` omitted on purpose: changing only the window keeps the
-        # existing PIN, so the same number stays valid on every lock. ``type=1``
-        # matches the field-tested code.
+        # existing PIN, so the same number stays valid on every lock. The API
+        # default ``type=1`` ("via bluetooth") only updates the cloud record:
+        # the lock would keep the window it was granted with.
         self._gateway_request(
             "PUT",
             "/password",
             {
                 "ID": lock_id,
                 "passID": pass_id,
-                "type": 1,
+                "type": 2,  # gateway
                 "startDate": self._to_ms(starts_at),
                 "endDate": self._to_ms(ends_at),
             },
